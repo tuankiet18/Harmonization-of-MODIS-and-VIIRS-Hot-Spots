@@ -1,0 +1,273 @@
+import { REGIONS } from './regions';
+import type { Bbox, DataMeta, DataSource, DayPoint, HotspotPoint, HotspotSample, MonthRecord, Source } from './types';
+
+/**
+ * Synthetic data with the same shape as the real harmonized dataset.
+ * Replace with StaticFileDataSource once the data team delivers (docs/DATA_CONTRACT.md).
+ * The numbers are FAKE - the UI shows a "demo data" banner while this source is active.
+ */
+
+const FIRST = '2000-11';
+const LAST = '2026-10';
+const VIIRS_START = '2012-01';
+const CALIB_END = '2023-12';
+const NRT_START = '2026-08';
+const VIIRS_TO_MODIS_RATIO = 3.3; // VIIRS (375 m) detects ~3x more hotspots than MODIS (1 km)
+
+function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashStr(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function gauss(rng: () => number): number {
+  const u = Math.max(rng(), 1e-9);
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+}
+
+export function monthsBetween(start: string, end: string): string[] {
+  const out: string[] = [];
+  let [y, m] = start.split('-').map(Number);
+  const [ey, em] = end.split('-').map(Number);
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+    m++;
+    if (m > 12) {
+      m = 1;
+      y++;
+    }
+  }
+  return out;
+}
+
+function climateAt(lat: number, lon: number) {
+  for (const r of REGIONS) {
+    const b = r.bbox;
+    if (lon >= b.west - 3 && lon <= b.east + 3 && lat >= b.south - 3 && lat <= b.north + 3) {
+      return { key: r.id, peakMonth: r.peakMonth, intensity: r.intensity };
+    }
+  }
+  return { key: 'default', peakMonth: lat > 35 ? 7 : lat >= 0 ? 3 : 9, intensity: 0.2 };
+}
+
+const yearFactorCache = new Map<string, number>();
+function yearFactor(key: string, year: number): number {
+  const id = `${key}:${year}`;
+  let v = yearFactorCache.get(id);
+  if (v === undefined) {
+    const rng = mulberry32(hashStr(id));
+    v = Math.exp(0.35 * gauss(rng));
+    if (rng() < 0.12) v *= 2.2; // a few extreme fire years
+    yearFactorCache.set(id, v);
+  }
+  return v;
+}
+
+function generateCell(lat: number, lon: number): MonthRecord[] {
+  const cellId = `${lat.toFixed(2)}_${lon.toFixed(2)}`;
+  const rng = mulberry32(hashStr(cellId));
+  const { key, peakMonth, intensity } = climateAt(lat, lon);
+  const cellFactor = Math.exp(0.5 * gauss(rng));
+  const months = monthsBetween(FIRST, LAST);
+
+  const rows = months.map((ym) => {
+    const [y, m] = ym.split('-').map(Number);
+    const seasonal = Math.exp(2.2 * (Math.cos((2 * Math.PI * (m - peakMonth)) / 12) - 1));
+    const truth = 40 * intensity * cellFactor * seasonal * yearFactor(key, y) * (0.8 + 0.4 * rng());
+    const modis = Math.round(truth * (0.9 + 0.2 * rng()));
+    const viirs = ym >= VIIRS_START ? Math.round(truth * VIIRS_TO_MODIS_RATIO * (0.9 + 0.2 * rng())) : null;
+    return { ym, modis, viirs };
+  });
+
+  // Per-cell VIIRS -> MODIS factor from the calibration overlap.
+  let sm = 0;
+  let sv = 0;
+  for (const r of rows) {
+    if (r.viirs !== null && r.ym <= CALIB_END) {
+      sm += r.modis;
+      sv += r.viirs;
+    }
+  }
+  const scale = sv > 0 ? sm / sv : 1 / VIIRS_TO_MODIS_RATIO;
+
+  return rows.map(({ ym, modis, viirs }) => {
+    let harmonized: number;
+    let method: MonthRecord['method'];
+    let inCalibration = false;
+    if (viirs === null) {
+      harmonized = modis;
+      method = 'modis_only';
+    } else if (ym <= CALIB_END) {
+      harmonized = (modis + viirs * scale) / 2;
+      method = 'blend';
+      inCalibration = true;
+    } else {
+      harmonized = viirs * scale;
+      method = 'viirs_scaled';
+    }
+    return {
+      cellId,
+      lat,
+      lon,
+      yearMonth: ym,
+      modisRaw: modis,
+      viirsRaw: viirs,
+      harmonized: Math.round(harmonized * 10) / 10,
+      method,
+      scaleFactor: viirs === null ? null : Math.round(scale * 1000) / 1000,
+      inCalibration,
+      dataStatus: ym >= NRT_START ? 'nrt' : 'standard',
+    };
+  });
+}
+
+export class MockDataSource implements DataSource {
+  async meta(): Promise<DataMeta> {
+    return {
+      version: 'mock-0.1',
+      method:
+        'DEMO: per-cell VIIRS→MODIS ratio from 2012–2023 overlap; blend in overlap, scaled VIIRS afterwards, MODIS only before 2012',
+      source: 'Synthetic demo data (not NASA FIRMS)',
+      gridDeg: 1,
+      updated: '2026-11-13',
+      firstMonth: FIRST,
+      lastMonth: LAST,
+      isMock: true,
+    };
+  }
+
+  private cacheKey = '';
+  private cache: MonthRecord[] = [];
+
+  private records(bbox: Bbox): MonthRecord[] {
+    const key = JSON.stringify(bbox);
+    if (key === this.cacheKey) return this.cache;
+    const step = gridStep(bbox);
+    const out: MonthRecord[] = [];
+    if (step > 0) {
+      for (let lat = bbox.south + step / 2; lat < bbox.north; lat += step) {
+        for (let lon = bbox.west + step / 2; lon < bbox.east; lon += step) {
+          out.push(...generateCell(lat, lon));
+        }
+      }
+    }
+    this.cacheKey = key;
+    this.cache = out;
+    return out;
+  }
+
+  async query(bbox: Bbox): Promise<MonthRecord[]> {
+    await new Promise((r) => setTimeout(r, 120)); // simulate latency so loading states are visible
+    return this.records(bbox);
+  }
+
+  async daily(bbox: Bbox, yearMonth: string): Promise<DayPoint[]> {
+    const cells = this.records(bbox).filter((r) => r.yearMonth === yearMonth);
+    const w = dayWeights(JSON.stringify(bbox), yearMonth);
+    const sum = (f: (r: MonthRecord) => number | null) => {
+      const v = cells.map(f).filter((x): x is number => x !== null);
+      return v.length ? v.reduce((a, b) => a + b, 0) : null;
+    };
+    const modis = sum((r) => r.modisRaw);
+    const viirs = sum((r) => r.viirsRaw);
+    const harmonized = sum((r) => r.harmonized);
+    const m = modis === null ? null : splitTotal(modis, w, true);
+    const v = viirs === null ? null : splitTotal(viirs, w, true);
+    const h = harmonized === null ? null : splitTotal(harmonized, w, false);
+    return w.map((_, i) => ({ day: i + 1, modis: m ? m[i] : null, viirs: v ? v[i] : null, harmonized: h ? h[i] : null }));
+  }
+
+  async points(bbox: Bbox, yearMonth: string, source: Source, day?: number): Promise<HotspotSample> {
+    const step = gridStep(bbox);
+    const cells = this.records(bbox).filter((r) => r.yearMonth === yearMonth);
+    const sensors = (['modis', 'viirs'] as const).filter((s) => source === 'harmonized' || source === s);
+    const count = (r: MonthRecord, s: 'modis' | 'viirs') => (s === 'modis' ? r.modisRaw : r.viirsRaw) ?? 0;
+    // For one day, each cell keeps the share of its month that falls on that day (same split as daily()).
+    const w = dayWeights(JSON.stringify(bbox), yearMonth);
+    const share: Record<string, number> = { modis: 1, viirs: 1 };
+    let total = 0;
+    for (const s of sensors) {
+      const month = cells.reduce((a, r) => a + count(r, s), 0);
+      if (day === undefined) {
+        total += month;
+      } else {
+        const d = splitTotal(month, w, true)[day - 1] ?? 0;
+        share[s] = month > 0 ? d / month : 0;
+        total += d;
+      }
+    }
+    const keep = Math.min(1, MAX_POINTS / Math.max(1, total));
+    const points: HotspotPoint[] = [];
+    for (const r of cells) {
+      // Fires recur around the same few places inside a cell.
+      const place = mulberry32(hashStr(r.cellId));
+      const centres = [0, 1, 2].map(() => [(place() - 0.5) * step * 0.7, (place() - 0.5) * step * 0.7]);
+      for (const s of sensors) {
+        const rng = mulberry32(hashStr(`${r.cellId}:${yearMonth}:${s}:${day ?? 0}`));
+        const n = Math.round(count(r, s) * share[s] * keep);
+        for (let i = 0; i < n; i++) {
+          const c = centres[Math.floor(rng() * centres.length)];
+          const half = step / 2;
+          points.push({
+            lat: r.lat + Math.max(-half, Math.min(half, c[0] + gauss(rng) * step * 0.09)),
+            lon: r.lon + Math.max(-half, Math.min(half, c[1] + gauss(rng) * step * 0.09)),
+            sensor: s,
+          });
+        }
+      }
+    }
+    return { points, total };
+  }
+}
+
+const MAX_POINTS = 4000;
+
+/** Uneven, clustered day weights for one month (fires flare up for a few days at a time). */
+function dayWeights(key: string, yearMonth: string): number[] {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const n = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const rng = mulberry32(hashStr(`${key}|${yearMonth}|days`));
+  const raw = Array.from({ length: n }, () => Math.exp(0.9 * gauss(rng)));
+  return raw.map((_, i) => (raw[Math.max(0, i - 1)] + 2 * raw[i] + raw[Math.min(n - 1, i + 1)]) / 4);
+}
+
+/** Split `total` across days in proportion to `w`; the parts always add back up to `total`. */
+function splitTotal(total: number, w: number[], integer: boolean): number[] {
+  const s = w.reduce((a, b) => a + b, 0);
+  if (!integer) {
+    const out = w.map((x) => Math.round(((total * x) / s) * 10) / 10);
+    const rest = out.slice(0, -1).reduce((a, b) => a + b, 0);
+    out[out.length - 1] = Math.max(0, Math.round((total - rest) * 10) / 10);
+    return out;
+  }
+  const exact = w.map((x) => (total * x) / s);
+  const base = exact.map(Math.floor);
+  const missing = Math.round(total) - base.reduce((a, b) => a + b, 0);
+  exact
+    .map((e, i) => [e - base[i], i] as const)
+    .sort((a, b) => b[0] - a[0])
+    .slice(0, missing)
+    .forEach(([, i]) => base[i]++);
+  return base;
+}
+
+function gridStep(bbox: Bbox): number {
+  const w = bbox.east - bbox.west;
+  const h = bbox.north - bbox.south;
+  if (w <= 0 || h <= 0) return 0;
+  return Math.max(1, Math.ceil(Math.max(w, h) / 15));
+}

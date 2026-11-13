@@ -1,0 +1,50 @@
+@import 'tailwindcss';
+
+/* Design tokens. Charts and the map cannot read CSS variables, so src/lib/theme.ts mirrors the colours. */
+@theme {
+  --color-page: #edf0ec;
+  --color-surface: #ffffff;
+  --color-ink: #17221d;
+  --color-ink-soft: #26372f;
+  --color-muted: #55625b;
+  --color-line: #d3d9d3;
+  --color-ember: #c8400a;
+  --color-ember-dark: #a03207;
+  --color-ember-wash: #fdf0e8;
+  --color-cool: #1f5fa8;
+  --color-ok: #0b6b4f;
+  --color-warn: #8a4b00;
+  --color-warn-wash: #fff6df;
+  --font-sans: Barlow, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Barlow Condensed', Barlow, system-ui, sans-serif;
+  --shadow-float: 0 1px 2px rgb(23 34 29 / 0.1), 0 10px 28px rgb(23 34 29 / 0.14);
+  --shadow-card: 0 1px 2px rgb(23 34 29 / 0.06);
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body { @apply bg-page font-sans text-base text-ink tabular-nums antialiased; }
+  :focus-visible { outline: 2px solid var(--color-ink); outline-offset: 2px; }
+}
+
+@layer components {
+  /* MapLibre markers and the loading skeleton live outside React class lists. */
+  .region-label {
+    @apply cursor-pointer whitespace-nowrap rounded-full border border-ember bg-surface px-2.5 py-0.5 text-sm font-semibold text-ember-dark shadow-card transition-colors hover:bg-ember hover:text-white;
+  }
+  .region-label[hidden] { display: none; }
+  .skeleton {
+    @apply rounded-xl;
+    background: linear-gradient(90deg, var(--color-page), #f7f8f6, var(--color-page));
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite linear;
+  }
+  .maplibregl-ctrl-attrib { font-size: 11px; }
+  .maplibregl-ctrl-group { @apply !rounded-xl !shadow-float; }
+}
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+  *, *::before, *::after { transition: none !important; }
+}
