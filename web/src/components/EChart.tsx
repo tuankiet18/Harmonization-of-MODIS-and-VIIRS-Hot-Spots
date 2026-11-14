@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts/core';
-import { HeatmapChart, LineChart } from 'echarts/charts';
+import { BarChart, HeatmapChart, LineChart } from 'echarts/charts';
 import {
   DataZoomComponent,
   GridComponent,
@@ -14,6 +14,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import type { EChartsCoreOption } from 'echarts/core';
 
 echarts.use([
+  BarChart,
   HeatmapChart,
   LineChart,
   GridComponent,
@@ -41,15 +42,22 @@ export default function EChart({ option, height, onClick, ariaLabel }: Props) {
   clickRef.current = onClick;
 
   useEffect(() => {
-    if (!el.current) return;
-    const c = echarts.init(el.current, undefined, { renderer: 'canvas' });
+    const parent = el.current;
+    if (!parent) return;
+    // Each mount gets its own host element. React may run this effect twice on one element (dev), and a chart that is
+    // disposed a frame late must only clear its own host, never the canvas of the instance that replaced it.
+    const host = document.createElement('div');
+    host.style.cssText = 'width:100%;height:100%';
+    parent.appendChild(host);
+    const c = echarts.init(host, undefined, { renderer: 'canvas' });
     chart.current = c;
     c.on('click', (p) => clickRef.current?.(p as { data?: unknown; name?: string }));
     const ro = new ResizeObserver(() => c.resize());
-    ro.observe(el.current);
+    ro.observe(parent);
     return () => {
       ro.disconnect();
       chart.current = null;
+      host.remove();
       // A paint may already be queued for the next frame; disposing now would leave it with no canvas layers.
       requestAnimationFrame(() => c.dispose());
     };

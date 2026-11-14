@@ -1,4 +1,4 @@
-import type { Bbox, DataMeta, DataSource, DayPoint, HexSample, MonthlyPoint, Source } from './types';
+import type { Bbox, DataMeta, DataSource, DateRange, DayPoint, HexSample, MonthlyPoint, Source } from './types';
 
 /** Reads the FastAPI backend (backend/README.md). Field names already match types.ts, so rows pass through untouched. */
 export class ApiDataSource implements DataSource {
@@ -27,7 +27,7 @@ export class ApiDataSource implements DataSource {
   daily(bbox: Bbox, yearMonth: string): Promise<DayPoint[]> {
     return this.get('/api/daily', { ...this.box(bbox), ym: yearMonth });
   }
-  hexes(bbox: Bbox, yearMonth: string, source: Source, day?: number): Promise<HexSample> {
-    return this.get('/api/hexes', { ...this.box(bbox), ym: yearMonth, source, day });
+  hexes(bbox: Bbox, range: DateRange, source: Source, day?: number): Promise<HexSample> {
+    return this.get('/api/hexes', { ...this.box(bbox), from: range.start, to: range.end, source, day });
   }
 }

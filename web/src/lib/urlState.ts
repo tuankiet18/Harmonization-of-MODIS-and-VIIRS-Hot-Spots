@@ -3,6 +3,7 @@ import type { Bbox, DateRange, Source } from '../data/types';
 export interface ShareState {
   regionId: string; // preset id, 'custom', 'country' or 'none'
   countryId: string | null; // set when regionId is 'country'
+  tab: string; // section of the app ('overview' is the default)
   bbox: Bbox | null;
   range: DateRange;
   source: Source;
@@ -28,6 +29,7 @@ export function encodeState(s: ShareState, limits: Limits): string {
   if (s.range.end !== limits.max) p.set('to', s.range.end);
   if (s.source !== 'harmonized') p.set('src', s.source);
   if (s.month) p.set('month', s.month);
+  if (s.tab !== 'overview') p.set('tab', s.tab);
   return p.toString().replaceAll('%2C', ',');
 }
 
@@ -74,6 +76,9 @@ export function decodeState(search: string, regions: Record<string, Bbox>, limit
 
   const month = p.get('month');
   if (month && YM.test(month)) out.month = month;
+
+  const tab = p.get('tab');
+  if (tab && /^[a-z][a-z-]*$/.test(tab)) out.tab = tab;
 
   return out;
 }

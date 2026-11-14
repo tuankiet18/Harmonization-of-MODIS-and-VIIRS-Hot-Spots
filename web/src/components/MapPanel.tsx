@@ -20,6 +20,8 @@ interface Props {
   cells: HexValue[];
   /** A country's borders, drawn instead of the rectangle when a country is selected. */
   outline: CountryGeometry | null;
+  /** Increase `n` to fly to a place (a cell picked in the list beside the map). */
+  flyTo: { lat: number; lon: number; n: number } | null;
   /** Called when the map settles after a move or zoom, so the hexagon size can follow the zoom. */
   onView: (v: { zoom: number; lat: number }) => void;
   /** Legend steps the hexagons are coloured by, and the H3 resolution they are drawn at. */
@@ -43,7 +45,7 @@ const PRESETS: FeatureCollection = {
 };
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, cells, outline, onView, steps, res, onPickRegion }: Props) {
+export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, cells, outline, onView, flyTo, steps, res, onPickRegion }: Props) {
   const { t } = useI18n();
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -223,6 +225,13 @@ export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, cells, out
   useEffect(() => {
     if (ready.current) fit();
   }, [fitSignal]);
+
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !flyTo) return;
+    m.flyTo({ center: [flyTo.lon, flyTo.lat], zoom: Math.max(m.getZoom(), 9), duration: 800 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flyTo?.n]);
 
   useEffect(() => {
     const m = map.current;

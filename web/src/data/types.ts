@@ -61,7 +61,7 @@ export interface DayPoint {
 /** One H3 res7 cell (~5 km2) on the fire map. */
 export interface HexCell {
   h3: string;
-  /** Days of the month with at least one detection in this cell (1 when a single day was asked for). */
+  /** Days with at least one detection in this cell, summed over the period (1 when a single day was asked for). */
   days: number;
 }
 
@@ -76,8 +76,8 @@ export interface DataSource {
   meta(): Promise<DataMeta>;
   /** One point per month, summed over the cells whose centre lies inside bbox. */
   monthly(bbox: Bbox): Promise<MonthlyPoint[]>;
-  /** Fire map inside bbox for one month, or one day of it, as H3 res7 hexagons. 'harmonized' uses both sensors. */
-  hexes(bbox: Bbox, yearMonth: string, source: Source, day?: number): Promise<HexSample>;
+  /** Fire map inside bbox for a period (or one day of a single month) as H3 res7 hexagons; each cell's days are summed over the period. */
+  hexes(bbox: Bbox, range: DateRange, source: Source, day?: number): Promise<HexSample>;
   /** Day-by-day totals for one month inside bbox. Days add up to the monthly totals. */
   daily(bbox: Bbox, yearMonth: string): Promise<DayPoint[]>;
 }

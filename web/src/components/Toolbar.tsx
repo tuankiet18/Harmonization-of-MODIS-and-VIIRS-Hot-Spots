@@ -1,21 +1,29 @@
 import { useI18n } from '../i18n';
 import { activePreset, presetRange, type PeriodPreset } from '../lib/range';
+import type { Country } from '../lib/countries';
 import type { DateRange } from '../data/types';
-import { IconDownload } from './Icons';
-import MonthPicker from './MonthPicker';
+import AreaSelect from './AreaSelect';
+import { IconDownload, Logo } from './Icons';
+import ShareButton from './ShareButton';
+import MonthInput from './MonthInput';
 import { btn, btnSolid } from './ui';
 
 interface Props {
-  areaName: string | null;
+  regionId: string;
+  countries: Country[];
+  countryId: string | null;
+  onRegion: (id: string) => void;
   range: DateRange;
   limits: { min: string; max: string };
   onRange: (r: DateRange) => void;
   canDownload: boolean;
   onDownload: () => void;
+  /** The numbers are synthetic: say so with a small badge. */
+  isMock: boolean;
 }
 
-/** Where and when: the chosen area, the period, quick presets, and the CSV download. */
-export default function Toolbar({ areaName, range, limits, onRange, canDownload, onDownload }: Props) {
+/** The one bar along the top, for every section: brand, area, period (typed or picked), presets, and the share and CSV buttons. */
+export default function Toolbar({ regionId, countries, countryId, onRegion, range, limits, onRange, canDownload, onDownload, isMock }: Props) {
   const { t } = useI18n();
   const active = activePreset(range, limits);
   const presets: { value: PeriodPreset; label: string }[] = [
@@ -25,29 +33,14 @@ export default function Toolbar({ areaName, range, limits, onRange, canDownload,
   ];
 
   return (
-    <div className="sticky top-0 z-10 -mx-4 flex flex-wrap items-end gap-x-3 gap-y-2 border-b border-line bg-surface/90 px-4 py-3 backdrop-blur lg:-mx-7 lg:px-7">
-      <button
-        type="button"
-        className={`${btn} flex-col items-start gap-0 py-1 leading-tight`}
-        onClick={() => document.getElementById('region-select')?.focus()}
-      >
-        <span className="text-xs font-normal text-muted">{t('areaLabel')}</span>
-        <span className="font-semibold">{areaName ?? t('noArea')}</span>
-      </button>
-      <MonthPicker
-        label={t('from')}
-        value={range.start}
-        min={limits.min}
-        max={limits.max}
-        onChange={(v) => onRange({ start: v, end: v > range.end ? v : range.end })}
-      />
-      <MonthPicker
-        label={t('to')}
-        value={range.end}
-        min={limits.min}
-        max={limits.max}
-        onChange={(v) => onRange({ start: v < range.start ? v : range.start, end: v })}
-      />
+    <header className="z-20 flex flex-wrap items-end gap-x-3 gap-y-2 border-b border-line bg-surface px-4 py-2 sm:px-5">
+      <div className="flex items-center gap-2 self-center pr-1">
+        <Logo />
+        <h1 className="font-display text-2xl font-semibold leading-none tracking-wide">{t('appName')}</h1>
+      </div>
+      <AreaSelect regionId={regionId} countries={countries} countryId={countryId} onRegion={onRegion} />
+      <MonthInput label={t('from')} value={range.start} min={limits.min} max={limits.max} onChange={(v) => onRange({ start: v, end: v > range.end ? v : range.end })} />
+      <MonthInput label={t('to')} value={range.end} min={limits.min} max={limits.max} onChange={(v) => onRange({ start: v < range.start ? v : range.start, end: v })} />
       <div role="group" aria-label={t('periodTitle')} className="flex flex-wrap gap-1.5">
         {presets.map((p) => (
           <button
@@ -61,10 +54,18 @@ export default function Toolbar({ areaName, range, limits, onRange, canDownload,
           </button>
         ))}
       </div>
-      <button type="button" className={`${btnSolid} ml-auto`} onClick={onDownload} disabled={!canDownload}>
-        <IconDownload />
-        {t('downloadCsv')}
-      </button>
-    </div>
+      <div className="ml-auto flex items-end gap-2">
+        {isMock && (
+          <span role="status" title={t('demoBanner')} aria-label={t('demoBanner')} className="mb-2 self-end rounded-full bg-[#fff1c2] px-2.5 py-0.5 text-sm font-semibold text-[#4d3700]">
+            {t('demoBadge')}
+          </span>
+        )}
+        <ShareButton />
+        <button type="button" className={btnSolid} onClick={onDownload} disabled={!canDownload} title={t('downloadCsv')} aria-label={t('downloadCsv')}>
+          <IconDownload />
+          <span className="sr-only 2xl:not-sr-only">{t('downloadCsv')}</span>
+        </button>
+      </div>
+    </header>
   );
 }

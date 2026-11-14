@@ -63,3 +63,11 @@ export const IconLink = () => (
     <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
   </Svg>
 );
+export const IconOverview = () => (
+  <Svg>
+    <rect x="3" y="3" width="8" height="8" rx="1.5" />
+    <rect x="13" y="3" width="8" height="5" rx="1.5" />
+    <rect x="13" y="10" width="8" height="11" rx="1.5" />
+    <rect x="3" y="13" width="8" height="8" rx="1.5" />
+  </Svg>
+);

@@ -1,20 +1,13 @@
 import { useI18n } from '../i18n';
-import { valueOf } from '../lib/aggregate';
-import { anomalyPct, medianForMonth, verdictOf, type Kpis, type Verdict } from '../lib/stats';
-import type { MonthlyPoint, Source } from '../data/types';
-import { IconNext, IconPrev } from './Icons';
-import { toolIcon } from './ui';
+import { verdictOf, type Kpis, type PeriodAnomaly, type Verdict } from '../lib/stats';
+import type { DateRange } from '../data/types';
 
 interface Props {
-  point: MonthlyPoint;
-  all: MonthlyPoint[];
-  source: Source;
-  place: string;
+  /** The period chosen in the top bar; the verdict, the facts and the map all describe it. */
+  period: DateRange;
+  anomaly: PeriodAnomaly;
   range: Kpis;
-  isLatest: boolean;
-  onStep: (dir: -1 | 1) => void;
-  canPrev: boolean;
-  canNext: boolean;
+  place: string;
 }
 
 // Text + glyph + colour, so the verdict never depends on colour alone.
@@ -35,16 +28,18 @@ function Fact({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
-/** The answer first: a verdict on the selected month, then three facts about the chosen period. */
-export default function Summary({ point, all, source, place, range, isLatest, onStep, canPrev, canNext }: Props) {
-  const { t, monthsLong, fmt, fmtCompact, fmtMonth, monthInSentence } = useI18n();
-  const value = valueOf(point, source);
-  const med = medianForMonth(all, source, point.month, point.year);
-  const anom = anomalyPct(value, med);
-  const verdict = verdictOf(anom);
+/** The answer first: the whole period against the usual, then three facts about it. */
+export default function Summary({ period, anomaly, range, place }: Props) {
+  const { t, months, fmt, fmtCompact, fmtMonth } = useI18n();
+  const verdict = verdictOf(anomaly.pct);
   const v = VERDICT[verdict];
-  const vars = { month: fmtMonth(point.yearMonth), m: monthInSentence(point.month), place, pct: anom === null ? '' : fmt(Math.abs(anom)), n: value === null ? '–' : fmt(value) };
+  const label =
+    period.start === period.end
+      ? fmtMonth(period.start)
+      : t('periodSpan', { from: `${months[Number(period.start.slice(5)) - 1]} ${period.start.slice(0, 4)}`, to: `${months[Number(period.end.slice(5)) - 1]} ${period.end.slice(0, 4)}` });
+  const vars = { period: label, place, pct: anomaly.pct === null ? '' : fmt(Math.abs(anomaly.pct)), n: fmt(anomaly.total) };
   const headline = verdict === 'unknown' ? t('headNoBase', vars) : verdict === 'typical' ? t('headNear', vars) : verdict === 'higher' ? t('headMore', vars) : t('headFewer', vars);
+  const busiest = range.busiest;
 
   return (
     <section className="py-6" aria-live="polite">
@@ -52,21 +47,14 @@ export default function Summary({ point, all, source, place, range, isLatest, on
         <span aria-hidden="true">{v.glyph}</span>
         {t(v.label)}
       </p>
-      <div className="flex items-start justify-between gap-3">
-        <h2 className={`border-l-4 pl-4 font-display text-[clamp(30px,2.6vw,42px)] font-semibold leading-[1.08] ${v.border}`}>{headline}</h2>
-        <div className="flex shrink-0 gap-1.5">
-          <button type="button" className={toolIcon} aria-label={t('prevMonth')} title={t('prevMonth')} disabled={!canPrev} onClick={() => onStep(-1)}>
-            <IconPrev />
-          </button>
-          <button type="button" className={toolIcon} aria-label={t('nextMonth')} title={t('nextMonth')} disabled={!canNext} onClick={() => onStep(1)}>
-            <IconNext />
-          </button>
-        </div>
-      </div>
-      {med !== null && value !== null && <p className="mt-3 max-w-[62ch]">{t('headSub', { med: fmt(med), val: fmt(value), m: monthInSentence(point.month) })}</p>}
-      {isLatest && <p className="mt-1 text-sm text-muted">{t('latestNote')}</p>}
+      <h2 className={`border-l-4 pl-4 font-display text-[clamp(28px,2.4vw,40px)] font-semibold leading-[1.08] ${v.border}`}>{headline}</h2>
+      {anomaly.pct !== null && <p className="mt-3 max-w-[62ch]">{t('headSub', { expected: fmt(Math.round(anomaly.expected)), compared: fmt(anomaly.compared) })}</p>}
       <dl className="mt-5 grid gap-3 sm:grid-cols-3">
-        <Fact label={t('factPeakMonth')} value={range.peakMonth ? monthsLong[range.peakMonth - 1] : t('noBaseline')} />
+        <Fact
+          label={t('factBusiest')}
+          value={busiest ? `${months[Number(busiest.yearMonth.slice(5)) - 1]} ${busiest.yearMonth.slice(0, 4)}` : t('noBaseline')}
+          sub={busiest ? t('factBusiestSub', { n: fmtCompact(busiest.value) }) : undefined}
+        />
         <Fact label={t('factPeakYear')} value={String(range.peakYear ?? t('noBaseline'))} sub={range.peakYearTotal !== null ? t('factPeakYearSub', { n: fmtCompact(range.peakYearTotal) }) : undefined} />
         <Fact label={t('factTotal')} value={fmtCompact(range.total)} sub={t('factTotalSub')} />
       </dl>

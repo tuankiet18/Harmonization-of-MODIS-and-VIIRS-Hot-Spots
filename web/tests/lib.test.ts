@@ -112,7 +112,7 @@ describe('period presets', () => {
 describe('share-link state', () => {
   const regions = { amazon: { west: -66, south: -14, east: -52, north: -4 } };
   const limits = { min: '2000-11', max: '2026-10' };
-  const base = { regionId: 'amazon', countryId: null, bbox: regions.amazon, range: { start: '2000-11', end: '2026-10' }, source: 'harmonized' as const, month: null };
+  const base = { regionId: 'amazon', countryId: null, tab: 'overview', bbox: regions.amazon, range: { start: '2000-11', end: '2026-10' }, source: 'harmonized' as const, month: null };
 
   it('omits everything that is a default', () => {
     expect(encodeState(base, limits)).toBe('area=amazon');
@@ -138,6 +138,11 @@ describe('share-link state', () => {
     expect(encodeState(s, limits)).toBe('area=country&country=704');
     expect(decodeState('area=country&country=704', regions, limits)).toEqual({ regionId: 'country', countryId: '704' });
     expect(decodeState('area=country', regions, limits)).toEqual({});
+  });
+  it('keeps the section in the link, and leaves out the default one', () => {
+    expect(encodeState({ ...base, tab: 'calendar' }, limits)).toBe('area=amazon&tab=calendar');
+    expect(decodeState('area=amazon&tab=calendar', regions, limits).tab).toBe('calendar');
+    expect(decodeState('tab=Cal%20endar!', regions, limits)).toEqual({});
   });
   it('encodes no area as an empty area state', () => {
     expect(encodeState({ ...base, regionId: 'none', bbox: null }, limits)).toBe('area=none');

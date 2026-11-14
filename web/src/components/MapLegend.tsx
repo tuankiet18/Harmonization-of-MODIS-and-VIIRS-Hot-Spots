@@ -1,17 +1,19 @@
 import { useI18n } from '../i18n';
-import { HEX_AREA_KM2, type HexStep } from '../lib/hex';
+import type { HexStep } from '../lib/hex';
 import { COLORS } from '../lib/theme';
 
 interface Props {
   hasArea: boolean;
-  /** What the hexagons on the map show right now: a month or one day, or nothing. */
-  hexMode: 'month' | 'day' | null;
+  /** What the hexagons on the map show right now: the chosen period or one day, or nothing. */
+  hexMode: 'period' | 'day' | null;
   steps: HexStep[];
   res: number;
+  /** What the hexagons add up to, e.g. '77 hexagons with fire (about 253 km2 each)'. */
+  caption: string;
 }
 
 /** Key to the map symbols that are on screen right now. */
-export default function MapLegend({ hasArea, hexMode, steps, res }: Props) {
+export default function MapLegend({ hasArea, hexMode, steps, res, caption }: Props) {
   const { t } = useI18n();
   const fine = res === 7;
   const title = hexMode === 'day' ? (fine ? t('legendHexDay') : t('legendHexDayCoarse')) : fine ? t('legendHexMonth') : t('legendHexMonthCoarse');
@@ -36,7 +38,7 @@ export default function MapLegend({ hasArea, hexMode, steps, res }: Props) {
               </li>
             ))}
           </ul>
-          <p className="mt-1 text-xs text-muted">{t('legendHexSize', { km2: Math.round(HEX_AREA_KM2[res] ?? 0).toLocaleString('en-US') })}</p>
+          <p className="mt-1 max-w-56 text-xs text-muted">{caption}</p>
         </div>
       )}
     </div>

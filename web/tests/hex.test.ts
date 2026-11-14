@@ -98,7 +98,7 @@ describe('hexGeoJson', () => {
 describe('MockDataSource.hexes', () => {
   const bbox = { west: 98, south: 12, east: 108, north: 22 };
   it('returns H3 res7 cells whose days stay within the month', async () => {
-    const h = await new MockDataSource().hexes(bbox, '2026-09', 'harmonized');
+    const h = await new MockDataSource().hexes(bbox, { start: '2026-09', end: '2026-09' }, 'harmonized');
     expect(h.cells.length).toBeGreaterThan(50);
     expect(h.total).toBe(h.cells.length);
     expect(h.used).toBe(h.cells.length);
@@ -109,10 +109,18 @@ describe('MockDataSource.hexes', () => {
     }
     expect(h.cells.some((c) => c.days > 1)).toBe(true);
   });
+  it('a longer period piles up more days in the busy cells than one month does', async () => {
+    const ds = new MockDataSource();
+    const month = await ds.hexes(bbox, { start: '2026-09', end: '2026-09' }, 'harmonized');
+    const year = await ds.hexes(bbox, { start: '2025-10', end: '2026-09' }, 'harmonized');
+    const top = (h: { cells: { days: number }[] }) => Math.max(...h.cells.map((c) => c.days));
+    expect(top(year)).toBeGreaterThan(top(month));
+    expect(year.cells.length).toBeGreaterThanOrEqual(month.cells.length);
+  });
   it('one day gives single-day cells and fewer cells than the whole month', async () => {
     const ds = new MockDataSource();
-    const month = await ds.hexes(bbox, '2026-09', 'harmonized');
-    const day = await ds.hexes(bbox, '2026-09', 'harmonized', 12);
+    const month = await ds.hexes(bbox, { start: '2026-09', end: '2026-09' }, 'harmonized');
+    const day = await ds.hexes(bbox, { start: '2026-09', end: '2026-09' }, 'harmonized', 12);
     expect(day.cells.length).toBeGreaterThan(0);
     expect(day.cells.length).toBeLessThan(month.cells.length);
     expect(day.cells.every((c) => c.days === 1)).toBe(true);

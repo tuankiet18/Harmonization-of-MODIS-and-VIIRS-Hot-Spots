@@ -1,15 +1,20 @@
 import { cellToLatLng } from 'h3-js';
 import { useEffect, useMemo, useState } from 'react';
-import Details from './components/Details';
-import FireCalendar, { type CalendarMode } from './components/FireCalendar';
-import { Logo } from './components/Icons';
+import AnnualChart from './components/AnnualChart';
+import AnomalyChart from './components/AnomalyChart';
+import CalendarTab from './components/CalendarTab';
+import ChartCard from './components/ChartCard';
+import { type CalendarMode } from './components/FireCalendar';
 import MapControls from './components/MapControls';
 import MapLegend from './components/MapLegend';
 import MapPanel from './components/MapPanel';
+import NavRail from './components/NavRail';
 import Segmented from './components/Segmented';
-import ShareButton from './components/ShareButton';
+import SeasonalChart from './components/SeasonalChart';
+import TopCellsList from './components/TopCellsList';
 import Summary from './components/Summary';
 import Toolbar from './components/Toolbar';
+import TrendChart from './components/TrendChart';
 import { btn } from './components/ui';
 import { dataSource } from './data';
 import { REGIONS } from './data/regions';
@@ -20,7 +25,9 @@ import { buildCsv, downloadText } from './lib/csv';
 import { loadCountries, type Country } from './lib/countries';
 import { pointInGeometry } from './lib/geo';
 import { aggregateCells, HEX_AREA_KM2, hexResolution, hexResolutionForZoom, hexSteps } from './lib/hex';
-import { computeKpis } from './lib/stats';
+import { nearestMonth } from './lib/months';
+import { anomalySeries, computeKpis, daysInPeriod, periodAnomaly, seasonalProfile, seasonProgress, topCells } from './lib/stats';
+import { DEFAULT_TAB, isTab, TABS } from './tabs';
 import { decodeState, encodeState } from './lib/urlState';
 
 const NO_HEXES: HexSample = { cells: [], total: 0, used: 0 };
@@ -35,6 +42,9 @@ export default function App() {
   const initial = useMemo(fromUrl, []);
   const [source, setSource] = useState<Source>(initial.source ?? 'harmonized');
   const [mode, setMode] = useState<CalendarMode>('count');
+  const [group, setGroup] = useState<'time' | 'usual' | 'where'>('time');
+  const [flyTo, setFlyTo] = useState<{ lat: number; lon: number; n: number } | null>(null);
+  const [tab, setTab] = useState<string>(isTab(initial.tab) ? initial.tab : DEFAULT_TAB);
   const [regionId, setRegionId] = useState(initial.regionId ?? 'amazon');
   // A shared country link has no box until the borders have loaded.
   const [bbox, setBbox] = useState<Bbox | null>(initial.regionId === 'country' ? null : initial.bbox !== undefined ? initial.bbox : REGIONS[0].bbox);
@@ -92,9 +102,9 @@ export default function App() {
   // Keep the address bar in step with the view so any state can be shared as a link.
   useEffect(() => {
     if (!synced) return;
-    const q = encodeState({ regionId, countryId: country?.id ?? null, bbox, range, source, month: selected }, limits);
+    const q = encodeState({ regionId, countryId: country?.id ?? null, tab, bbox, range, source, month: selected }, limits);
     window.history.replaceState(null, '', `${window.location.pathname}?${q}`);
-  }, [synced, regionId, country, bbox, range, source, selected, limits]);
+  }, [synced, regionId, country, tab, bbox, range, source, selected, limits]);
 
   useEffect(() => {
     if (!bbox) {
@@ -116,6 +126,7 @@ export default function App() {
 
   const inRange = useMemo(() => all.filter((p) => p.yearMonth >= range.start && p.yearMonth <= range.end), [all, range]);
   const kRange = useMemo(() => computeKpis(inRange, source), [inRange, source]);
+  const anomaly = useMemo(() => periodAnomaly(inRange, all, source), [inRange, all, source]);
   const hasData = !loading && inRange.length > 0 && kRange.total > 0;
 
   // One month is always in focus: the one the user picked, otherwise the latest with data.
@@ -125,8 +136,6 @@ export default function App() {
     [withValue, selected],
   );
   const focus = focusPoint?.yearMonth ?? null;
-  const focusIdx = focusPoint ? withValue.indexOf(focusPoint) : -1;
-  const isLatest = !!focusPoint && focusPoint.yearMonth !== selected;
 
   // A picked day only counts while its month is still the month in focus.
   const day = dayPick && dayPick.ym === focus ? dayPick.day : null;
@@ -146,8 +155,11 @@ export default function App() {
     };
   }, [bbox, focus, loading]);
 
+  // The map follows the period chosen in the top bar. Only a single day (picked on the Calendar tab) narrows it to its month.
+  const hexStart = day !== null && focus ? focus : range.start;
+  const hexEnd = day !== null && focus ? focus : range.end;
   useEffect(() => {
-    if (!showHexes || !bbox || !focus || loading) {
+    if (!showHexes || !bbox || !synced) {
       setHexes(NO_HEXES);
       setHexesLoading(false);
       return;
@@ -160,13 +172,13 @@ export default function App() {
       setHexesLoading(false);
     };
     dataSource
-      .hexes(bbox, focus, source, day ?? undefined)
+      .hexes(bbox, { start: hexStart, end: hexEnd }, source, day ?? undefined)
       .then(done)
       .catch(() => done(NO_HEXES));
     return () => {
       cancelled = true;
     };
-  }, [bbox, focus, source, loading, day, showHexes]);
+  }, [bbox, hexStart, hexEnd, source, day, showHexes, synced]);
 
   const region = REGIONS.find((r) => r.id === regionId);
   const place = country ? country.name : (region && (region.enInSentence ?? region.name)) || t('placeCustom');
@@ -209,16 +221,16 @@ export default function App() {
     setSelected(null);
     setFitSignal((n) => n + 1);
   };
-  const step = (dir: -1 | 1) => {
-    const next = withValue[focusIdx + dir];
-    if (next) {
-      setSelected(next.yearMonth);
-      setDayPick(null);
-    }
-  };
+  // A month typed by hand may have no data; move to the closest one that has.
   const pickMonth = (ym: string) => {
-    setSelected(ym);
+    setSelected(nearestMonth(withValue.map((p) => p.yearMonth), ym) ?? ym);
     setDayPick(null);
+  };
+  // A year clicked on the totals chart: the same calendar month of that year if it has data, otherwise its last month.
+  const pickYear = (year: number) => {
+    const inYear = withValue.filter((p) => p.year === year);
+    if (!inYear.length) return;
+    pickMonth((inYear.find((p) => p.month === focusPoint?.month) ?? inYear[inYear.length - 1]).yearMonth);
   };
 
   const exportCsv = () => {
@@ -238,8 +250,14 @@ export default function App() {
         })
       : hexes.cells;
     const items = aggregateCells(cells, res);
-    return { res, items, steps: hexSteps(items[0]?.value ?? 1), km2: Math.round(HEX_AREA_KM2[res]).toLocaleString('en-US') };
+    return { res, items, cells, steps: hexSteps(items[0]?.value ?? 1), km2: Math.round(HEX_AREA_KM2[res]).toLocaleString('en-US') };
   }, [hexes, hexRes, country]);
+
+  const focusYear = focusPoint?.year ?? null;
+  const anomalies = useMemo(() => anomalySeries(inRange, all, source), [inRange, all, source]);
+  const seasonal = useMemo(() => seasonalProfile(all, source, focusYear), [all, source, focusYear]);
+  const progress = useMemo(() => seasonProgress(all, source, focusYear), [all, source, focusYear]);
+  const busiestCells = useMemo(() => topCells(hexView.cells, daysInPeriod({ start: hexStart, end: hexEnd }), 10), [hexView.cells, hexStart, hexEnd]);
 
   const caption = hexesLoading
     ? t('mapCaptionLoading')
@@ -249,144 +267,163 @@ export default function App() {
         ? t('mapCaptionSample', { cells: fmt(hexView.items.length), km2: hexView.km2, shown: fmt(hexes.used), n: fmt(hexes.total) })
         : t('mapCaptionAll', { cells: fmt(hexView.items.length), km2: hexView.km2, n: fmt(hexes.total) });
 
+  const areaProps = {
+    regionId,
+    countries,
+    countryId: country?.id ?? null,
+    onRegion: (id: string) => (id.startsWith('country:') ? pickCountry(id.slice('country:'.length)) : pickRegion(id)),
+  };
+
+  const rawNotice =
+    bbox && source !== 'harmonized' ? (
+      <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-warn-wash px-3 py-2 text-sm" role="status">
+        {t('rawNotice', { series: source === 'modis' ? t('srcModis') : t('srcViirs') })}
+        <button type="button" className="inline-flex min-h-10 items-center font-semibold underline pointer-coarse:min-h-11" onClick={() => setSource('harmonized')}>
+          {t('rawBack')}
+        </button>
+      </p>
+    ) : null;
+
+  // What both sections show instead of their content when there is nothing to show yet.
+  const status = !bbox ? (
+    <div className="flex flex-col gap-3 py-12" role="status">
+      <h2 className="font-display text-3xl font-semibold leading-tight">{t('emptyTitle')}</h2>
+      <p className="text-muted">{t('emptyHint')}</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {REGIONS.map((r) => (
+          <button key={r.id} type="button" className={btn} onClick={() => pickRegion(r.id)}>
+            {r.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  ) : failed ? (
+    <div className="flex flex-col gap-3 py-12" role="alert">
+      <h2 className="font-display text-3xl font-semibold leading-tight">{t('loadError')}</h2>
+    </div>
+  ) : loading ? (
+    <div className="flex flex-col gap-3 py-12" role="status" aria-busy="true">
+      <div className="skeleton" style={{ height: 96 }} />
+      <div className="skeleton" style={{ height: 320 }} />
+      <p className="text-muted">{t('loading')}</p>
+    </div>
+  ) : !hasData || !focusPoint ? (
+    <div className="flex flex-col gap-3 py-12" role="status">
+      <h2 className="font-display text-3xl font-semibold leading-tight">{t('noDataTitle')}</h2>
+      <p className="text-muted">{t('noDataHint')}</p>
+    </div>
+  ) : null;
+
+  const footer = <p className="border-t border-line pb-6 pt-4 text-sm text-muted">{t('footer')}</p>;
+
   return (
     <div className="flex min-h-full flex-col lg:h-dvh">
-      {meta?.isMock && (
-        <p className="bg-[#fff1c2] px-4 py-1.5 text-center text-sm text-[#4d3700]" role="status">
-          {t('demoBanner')}
-        </p>
-      )}
-      <header className="z-20 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-line bg-surface px-4 py-2.5 sm:px-5">
-        <div className="flex items-center gap-3">
-          <Logo />
-          <div>
-            <h1 className="font-display text-[26px] font-semibold leading-none tracking-wide">{t('appName')}</h1>
-            <p className="text-sm leading-tight text-muted">{t('appSubtitle')}</p>
-          </div>
-        </div>
-        <ShareButton />
-      </header>
+      <Toolbar {...areaProps} range={range} limits={limits} onRange={setRange} canDownload={hasData} onDownload={exportCsv} isMock={!!meta?.isMock} />
 
-      <main className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1.08fr)_minmax(520px,1fr)] lg:grid-rows-[minmax(0,1fr)]">
-        <div className="relative h-[42vh] min-h-72 lg:h-auto lg:min-h-0">
-          <MapPanel bbox={bbox} fitSignal={fitSignal} drawing={drawing} onDrawn={drawn} cells={showHexes ? hexView.items : []} outline={country ? country.geometry : null} onView={setView} steps={hexView.steps} res={hexView.res} onPickRegion={pickRegion} />
-          {showHexes && bbox && !loading && !hexesLoading && hexes.total === 0 && (
-            <p className="pointer-events-none absolute bottom-10 right-3 z-10 max-w-64 rounded-lg bg-surface/95 px-3 py-2 text-sm shadow-sm" role="status">
-              {t('mapCaptionNone')}
-            </p>
-          )}
-          <MapLegend hasArea={!!bbox} hexMode={showHexes && hexes.cells.length > 0 ? (day !== null ? 'day' : 'month') : null} steps={hexView.steps} res={hexView.res} />
-          <MapControls
-            regionId={regionId}
-            countries={countries}
-            countryId={country?.id ?? null}
-            bbox={bbox}
-            drawing={drawing}
-            onRegion={(id) => (id.startsWith('country:') ? pickCountry(id.slice('country:'.length)) : pickRegion(id))}
-            onBbox={applyBbox}
-            onDrawToggle={() => setDrawing((d) => !d)}
-            onClear={clear}
-          />
-        </div>
+      <div className="flex min-h-0 flex-1 flex-col pb-16 lg:flex-row lg:pb-0">
+        <NavRail tabs={TABS} active={tab} onChange={setTab} />
 
-        <div className="min-w-0 bg-surface px-4 lg:overflow-y-auto lg:border-l lg:border-line lg:px-7">
-          <Toolbar
-            areaName={country ? country.name : region ? region.name : regionId === 'custom' ? t('customArea') : null}
-            range={range}
-            limits={limits}
-            onRange={setRange}
-            canDownload={hasData}
-            onDownload={exportCsv}
-          />
+        <main className="min-h-0 min-w-0 flex-1">
+          {tab === 'overview' && (
+            <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" className="grid h-full lg:grid-cols-[minmax(0,1.1fr)_minmax(420px,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+              <div className="relative h-[46vh] min-h-72 lg:h-auto lg:min-h-0">
+                <MapPanel bbox={bbox} fitSignal={fitSignal} drawing={drawing} onDrawn={drawn} cells={showHexes ? hexView.items : []} outline={country ? country.geometry : null} onView={setView} flyTo={flyTo} steps={hexView.steps} res={hexView.res} onPickRegion={pickRegion} />
+                {showHexes && bbox && !loading && !hexesLoading && hexes.total === 0 && (
+                  <p className="pointer-events-none absolute bottom-10 right-3 z-10 max-w-64 rounded-lg bg-surface/95 px-3 py-2 text-sm shadow-sm" role="status">
+                    {t('mapCaptionNone')}
+                  </p>
+                )}
+                <MapLegend hasArea={!!bbox} hexMode={showHexes && hexes.cells.length > 0 ? (day !== null ? 'day' : 'period') : null} steps={hexView.steps} res={hexView.res} caption={caption} />
+                <MapControls bbox={bbox} drawing={drawing} onBbox={applyBbox} onDrawToggle={() => setDrawing((d) => !d)} onClear={clear} showHexes={showHexes} onShowHexes={setShowHexes} />
+              </div>
 
-          {bbox && source !== 'harmonized' && (
-            <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-warn-wash px-3 py-2 text-sm" role="status">
-              {t('rawNotice', { series: source === 'modis' ? t('srcModis') : t('srcViirs') })}
-              <button type="button" className="inline-flex min-h-10 items-center font-semibold underline pointer-coarse:min-h-11" onClick={() => setSource('harmonized')}>
-                {t('rawBack')}
-              </button>
-            </p>
-          )}
-
-          {!bbox ? (
-            <div className="flex flex-col gap-3 py-12" role="status">
-              <h2 className="font-display text-3xl font-semibold leading-tight">{t('emptyTitle')}</h2>
-              <p className="text-muted">{t('emptyHint')}</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {REGIONS.map((r) => (
-                  <button key={r.id} type="button" className={btn} onClick={() => pickRegion(r.id)}>
-                    {r.name}
-                  </button>
-                ))}
+              <div className="min-w-0 bg-surface px-4 lg:overflow-y-auto lg:border-l lg:border-line lg:px-7">
+                {rawNotice}
+                {status ?? (
+                  focusPoint && (
+                    <>
+                      <Summary period={range} anomaly={anomaly} range={kRange} place={place} />
+                      <div className="border-t border-line pt-4">
+                        <Segmented<'time' | 'usual' | 'where'>
+                          label={t('groupLabel')}
+                          value={group}
+                          onChange={setGroup}
+                          options={[
+                            { value: 'time', label: t('groupTime') },
+                            { value: 'usual', label: t('groupUsual') },
+                            { value: 'where', label: t('groupWhere') },
+                          ]}
+                        />
+                      </div>
+                      {group === 'time' && (
+                        <>
+                          <ChartCard id="trend-h" title={t('trendTitle')} hint={t('trendHint')}>
+                            <TrendChart points={inRange} source={source} focus={focus} onSelect={pickMonth} />
+                          </ChartCard>
+                          <ChartCard id="annual-h" title={t('annualTitle')} hint={t('annualHint')}>
+                            <AnnualChart points={inRange} source={source} focusYear={focusPoint.year} onSelectYear={pickYear} />
+                          </ChartCard>
+                        </>
+                      )}
+                      {group === 'usual' && (
+                        <>
+                          <ChartCard id="anomaly-h" title={t('anomalyTitle')} hint={t('anomalyHint')}>
+                            <AnomalyChart series={anomalies} focus={focus} onSelect={pickMonth} />
+                          </ChartCard>
+                          <ChartCard id="seasonal-h" title={t('seasonalTitle', { year: String(focusPoint.year) })} hint={t('seasonalHint', { year: String(focusPoint.year) })}>
+                            <SeasonalChart profile={seasonal} focusYear={focusPoint.year} ariaLabel={t('seasonalTitle', { year: String(focusPoint.year) })} />
+                          </ChartCard>
+                          <ChartCard id="progress-h" title={t('progressTitle')} hint={t('progressHint', { year: String(focusPoint.year) })}>
+                            <SeasonalChart profile={progress} focusYear={focusPoint.year} ariaLabel={t('progressTitle')} />
+                          </ChartCard>
+                        </>
+                      )}
+                      {group === 'where' && (
+                        <ChartCard id="cells-h" title={t('cellsTitle')} hint={t('cellsHint')}>
+                          <TopCellsList cells={busiestCells} onGo={(lat, lon) => setFlyTo((f) => ({ lat, lon, n: (f?.n ?? 0) + 1 }))} />
+                        </ChartCard>
+                      )}
+                    </>
+                  )
+                )}
+                {footer}
               </div>
             </div>
-          ) : failed ? (
-            <div className="flex flex-col gap-3 py-12" role="alert">
-              <h2 className="font-display text-3xl font-semibold leading-tight">{t('loadError')}</h2>
-            </div>
-          ) : loading ? (
-            <div className="flex flex-col gap-3 py-12" role="status" aria-busy="true">
-              <div className="skeleton" style={{ height: 96 }} />
-              <div className="skeleton" style={{ height: 320 }} />
-              <p className="text-muted">{t('loading')}</p>
-            </div>
-          ) : !hasData || !focusPoint ? (
-            <div className="flex flex-col gap-3 py-12" role="status">
-              <h2 className="font-display text-3xl font-semibold leading-tight">{t('noDataTitle')}</h2>
-              <p className="text-muted">{t('noDataHint')}</p>
-            </div>
-          ) : (
-            <>
-              <Summary
-                point={focusPoint}
-                all={all}
-                source={source}
-                place={place}
-                range={kRange}
-                isLatest={isLatest}
-                onStep={step}
-                canPrev={focusIdx > 0}
-                canNext={focusIdx < withValue.length - 1}
-              />
-              <section className="border-t border-line py-6" aria-labelledby="cal-h">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                  <h2 id="cal-h" className="text-lg font-semibold">{t('calendarTitle')}</h2>
-                  <Segmented<CalendarMode>
-                    label={t('calendarMode')}
-                    value={mode}
-                    onChange={setMode}
-                    options={[
-                      { value: 'count', label: t('modeCount') },
-                      { value: 'anomaly', label: t('modeAnomaly') },
-                    ]}
-                  />
-                </div>
-                <p className="mb-3 text-sm text-muted">{t(mode === 'count' ? 'howToReadCount' : 'howToReadAnomaly')}</p>
-                <FireCalendar inRange={inRange} all={all} source={source} mode={mode} focus={focus} onSelect={pickMonth} />
-              </section>
-              <Details
-                point={focusPoint}
-                inRange={inRange}
-                source={source}
-                onSource={setSource}
-                meta={meta}
-                focus={focus}
-                onSelect={pickMonth}
-                daily={daily}
-                day={day}
-                onPickDay={(d) => {
-                  setDayPick(d === null ? null : { ym: focusPoint.yearMonth, day: d });
-                  if (d !== null) setShowHexes(true);
-                }}
-                showHexes={showHexes}
-                onShowHexes={setShowHexes}
-                caption={caption}
-              />
-            </>
           )}
-          <p className="border-t border-line pb-6 pt-4 text-sm text-muted">{t('footer')}</p>
-        </div>
-      </main>
+
+          {tab === 'calendar' && (
+            <div role="tabpanel" id="panel-calendar" aria-labelledby="tab-calendar" className="h-full bg-surface px-4 sm:px-7 lg:overflow-y-auto">
+              <div className="mx-auto max-w-5xl">
+                {rawNotice}
+                {status ?? (
+                  focusPoint && (
+                    <CalendarTab
+                      point={focusPoint}
+                      inRange={inRange}
+                      all={all}
+                      source={source}
+                      onSource={setSource}
+                      mode={mode}
+                      onMode={setMode}
+                      meta={meta}
+                      focus={focus}
+                      onSelect={pickMonth}
+                      daily={daily}
+                      day={day}
+                      onPickDay={(d) => {
+                        setDayPick(d === null ? null : { ym: focusPoint.yearMonth, day: d });
+                        if (d !== null) setShowHexes(true);
+                      }}
+                      onShowOnMap={() => setTab('overview')}
+                    />
+                  )
+                )}
+                {footer}
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   );
 }

@@ -24,9 +24,12 @@ export default function ShareButton() {
   };
 
   return (
-    <button type="button" className={btn} onClick={copy}>
+    <button type="button" className={btn} onClick={copy} title={t('share')} aria-label={t('share')}>
       <IconLink />
-      <span role="status">{copied ? t('shareCopied') : t('share')}</span>
+      {/* Icon only on most screens; the words (and the "copied" notice, which stays announced) show on very wide ones. */}
+      <span role="status" className="sr-only 2xl:not-sr-only">
+        {copied ? t('shareCopied') : t('share')}
+      </span>
     </button>
   );
 }

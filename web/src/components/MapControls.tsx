@@ -1,19 +1,14 @@
 import { useEffect, useState } from 'react';
-import { REGIONS } from '../data/regions';
 import { useI18n } from '../i18n';
 import type { Bbox } from '../data/types';
-import type { Country } from '../lib/countries';
 import { IconClose, IconCoords, IconDraw } from './Icons';
-import { btnSolid, field, fieldLabel, select, tool, toolIcon, toolOn } from './ui';
+import { btnSolid, field, fieldLabel, tool, toolIcon, toolOn } from './ui';
 
 interface Props {
-  regionId: string; // preset id, 'custom', 'country' or 'none'
-  /** Country borders, loaded after the page; the list stays empty until then. */
-  countries: Country[];
-  countryId: string | null;
   bbox: Bbox | null;
   drawing: boolean;
-  onRegion: (id: string) => void;
+  showHexes: boolean;
+  onShowHexes: (v: boolean) => void;
   onBbox: (b: Bbox) => void;
   onDrawToggle: () => void;
   onClear: () => void;
@@ -31,7 +26,7 @@ export function validBbox(b: Bbox): boolean {
   );
 }
 
-/** Floating bar on the map: choose a region, draw one, or type its coordinates. */
+/** Floating bar on the map: draw an area, type its coordinates, switch the hexagons on or off. */
 export default function MapControls(p: Props) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -56,27 +51,6 @@ export default function MapControls(p: Props) {
   return (
     <div className="pointer-events-none absolute left-3 right-14 top-3 flex flex-col items-start gap-2">
       <div className="pointer-events-auto flex max-w-full flex-wrap gap-1.5 rounded-2xl bg-surface/95 p-1.5 shadow-float backdrop-blur">
-        <select id="region-select" className={`${select} max-w-full font-semibold`} aria-label={t('region')} value={p.regionId === 'country' ? `country:${p.countryId}` : p.regionId} onChange={(e) => p.onRegion(e.target.value)}>
-          {p.regionId === 'none' && <option value="none">{t('chooseRegion')}</option>}
-          {p.regionId === 'custom' && <option value="custom">{t('customArea')}</option>}
-          {p.regionId === 'country' && !p.countries.some((c) => c.id === p.countryId) && <option value={`country:${p.countryId}`}>{t('loading')}</option>}
-          <optgroup label={t('regionsGroup')}>
-            {REGIONS.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </optgroup>
-          {p.countries.length > 0 && (
-            <optgroup label={t('countriesGroup')}>
-              {p.countries.map((c) => (
-                <option key={c.id} value={`country:${c.id}`}>
-                  {c.name}
-                </option>
-              ))}
-            </optgroup>
-          )}
-        </select>
         <button type="button" className={p.drawing ? toolOn : tool} aria-pressed={p.drawing} onClick={p.onDrawToggle}>
           <IconDraw />
           <span>{p.drawing ? t('drawing') : t('drawArea')}</span>
@@ -84,6 +58,9 @@ export default function MapControls(p: Props) {
         <button type="button" className={open ? toolOn : tool} aria-expanded={open} aria-controls="coords-form" onClick={() => setOpen((o) => !o)}>
           <IconCoords />
           <span>{t('coords')}</span>
+        </button>
+        <button type="button" className={p.showHexes ? toolOn : tool} aria-pressed={p.showHexes} onClick={() => p.onShowHexes(!p.showHexes)}>
+          <span>{t('hexToggle')}</span>
         </button>
         {p.bbox && (
           <button type="button" className={toolIcon} aria-label={t('clear')} title={t('clear')} onClick={p.onClear}>

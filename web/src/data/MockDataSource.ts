@@ -1,7 +1,7 @@
 import { latLngToCell } from 'h3-js';
 import { aggregateMonthly } from '../lib/aggregate';
 import { REGIONS } from './regions';
-import type { Bbox, DataMeta, DataSource, DayPoint, HexSample, HotspotPoint, HotspotSample, MonthRecord, MonthlyPoint, Source } from './types';
+import type { Bbox, DataMeta, DataSource, DateRange, DayPoint, HexSample, HotspotPoint, HotspotSample, MonthRecord, MonthlyPoint, Source } from './types';
 
 /**
  * Synthetic data with the same shape as the real harmonized dataset.
@@ -234,19 +234,37 @@ export class MockDataSource implements DataSource {
     return { points, total };
   }
 
-  /** The fire map as H3 res7 hexagons, built from the same synthetic detections as points(). */
-  async hexes(bbox: Bbox, yearMonth: string, source: Source, day?: number): Promise<HexSample> {
-    const { points } = await this.points(bbox, yearMonth, source, day);
-    const daysByCell = new Map<string, Set<number>>();
-    for (const p of points) {
-      const id = latLngToCell(p.lat, p.lon, 7);
-      const set = daysByCell.get(id);
-      if (set) set.add(p.day);
-      else daysByCell.set(id, new Set([p.day]));
+  /**
+   * The fire map as H3 res7 hexagons, built from the same synthetic detections as points(). A long period would mean
+   * thousands of synthetic months, so at most 12 evenly spaced ones are drawn and their days scaled up to stand in for the rest.
+   */
+  async hexes(bbox: Bbox, range: DateRange, source: Source, day?: number): Promise<HexSample> {
+    const months = monthsBetween(range.start, range.end);
+    const sample = day !== undefined ? [range.start] : evenly(months, 12);
+    const days = new Map<string, number>();
+    for (const ym of sample) {
+      const { points } = await this.points(bbox, ym, source, day);
+      const inMonth = new Map<string, Set<number>>();
+      for (const p of points) {
+        const id = latLngToCell(p.lat, p.lon, 7);
+        const set = inMonth.get(id);
+        if (set) set.add(p.day);
+        else inMonth.set(id, new Set([p.day]));
+      }
+      for (const [id, set] of inMonth) days.set(id, (days.get(id) ?? 0) + set.size);
     }
-    const cells = [...daysByCell].map(([h3, d]) => ({ h3, days: d.size })).sort((a, b) => b.days - a.days || (a.h3 < b.h3 ? -1 : 1));
+    const scale = day !== undefined ? 1 : months.length / sample.length;
+    const cells = [...days]
+      .map(([h3, d]) => ({ h3, days: Math.max(1, Math.round(d * scale)) }))
+      .sort((a, b) => b.days - a.days || (a.h3 < b.h3 ? -1 : 1));
     return { cells, total: cells.length, used: cells.length };
   }
+}
+
+/** At most n items of the list, evenly spread, always including the first and the last. */
+function evenly<T>(list: T[], n: number): T[] {
+  if (list.length <= n) return list;
+  return Array.from({ length: n }, (_, i) => list[Math.round((i * (list.length - 1)) / (n - 1))]);
 }
 
 /** Pick a day of the month with probability proportional to its weight. */
