@@ -118,3 +118,27 @@ def test_cors_allows_only_configured_origin(client):
     bad = client.get("/health", headers={"Origin": "https://evil.example"})
     assert ok.headers.get("access-control-allow-origin") == "http://localhost:5173"
     assert "access-control-allow-origin" not in bad.headers
+
+
+def test_hexes_group_detections_into_h3_cells(client):
+    import h3
+
+    j = client.get("/api/hexes", params={**BOX, "ym": "2026-09"}).json()
+    assert j["total"] > 0 and j["cells"]
+    assert {"h3", "days"} <= set(j["cells"][0])
+    for c in j["cells"]:
+        assert h3.get_resolution(c["h3"]) == 7 and 1 <= c["days"] <= 30
+    # Uncapped, every cell with fire is returned: total counts cells (not detections), used is how many came back.
+    assert j["total"] == j["used"] == len(j["cells"])
+
+
+def test_hexes_for_one_day_are_single_day_cells(client):
+    cells = client.get("/api/hexes", params={**BOX, "ym": "2026-09", "day": 5}).json()["cells"]
+    assert cells and all(c["days"] == 1 for c in cells)
+
+
+def test_hexes_respect_series_and_empty_months(client):
+    both = client.get("/api/hexes", params={**BOX, "ym": "2026-09"}).json()
+    modis = client.get("/api/hexes", params={**BOX, "ym": "2026-09", "source": "modis"}).json()
+    assert 0 < modis["total"] <= both["total"]
+    assert client.get("/api/hexes", params={**BOX, "ym": "2010-01"}).json() == {"cells": [], "total": 0, "used": 0}

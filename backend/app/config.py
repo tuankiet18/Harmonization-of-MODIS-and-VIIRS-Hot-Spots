@@ -22,6 +22,8 @@ class Settings:
     explain_rate_per_min: int = field(default_factory=lambda: int(os.getenv("EXPLAIN_RATE_PER_MIN", "10")))
     # Hard cap on points returned by /api/points so the map stays fast.
     max_points: int = field(default_factory=lambda: int(os.getenv("MAX_POINTS", "4000")))
+    # Hard cap on hexagons returned by /api/hexes.
+    max_hexes: int = field(default_factory=lambda: int(os.getenv("MAX_HEXES", "8000")))
     # Hard cap on rows in a CSV export.
     max_export_rows: int = field(default_factory=lambda: int(os.getenv("MAX_EXPORT_ROWS", "500000")))
 

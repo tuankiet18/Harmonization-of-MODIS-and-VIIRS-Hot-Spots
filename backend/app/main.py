@@ -15,6 +15,7 @@ from .schemas import (
     DayPoint,
     ExplainRequest,
     ExplainResponse,
+    HexSample,
     HotspotSample,
     MonthlyPoint,
     Source,
@@ -97,6 +98,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sensors = ["modis", "viirs"] if source == "harmonized" else [source]
         rows, total = store.points(box, ym, sensors, day, min(limit, settings.max_points))
         return {"points": rows, "total": total}
+
+    @app.get("/api/hexes", response_model=HexSample, response_model_by_alias=True)
+    def hexes(
+        box: Annotated[Bbox, Depends(bbox_params)],
+        ym: Annotated[str, Query(pattern=YM)],
+        source: Source = "harmonized",
+        day: Annotated[int | None, Query(ge=1, le=31)] = None,
+        limit: Annotated[int, Query(ge=1)] = 8000,
+    ):
+        """Fire map as H3 res7 hexagons: how many days of the month each ~5 km2 cell had a detection (1 for a single day)."""
+        sensors = ["modis", "viirs"] if source == "harmonized" else [source]
+        return store.hexes(box, ym, sensors, day, min(limit, settings.max_hexes))
 
     @app.get("/api/export.csv")
     def export_csv(

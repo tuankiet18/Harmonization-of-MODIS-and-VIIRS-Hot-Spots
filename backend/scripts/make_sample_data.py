@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import duckdb
+import h3
 
 FIRST, LAST = "2000-11", "2026-10"
 VIIRS_START = "2012-01"
@@ -117,7 +118,7 @@ def build(out_dir: Path, regions: list[Region] = REGIONS, seed: int = 7, daily_s
             wm, wd, wp = csv.writer(fm), csv.writer(fd), csv.writer(fp)
             wm.writerow(["cell_id", "lat", "lon", "year_month", "modis_raw", "viirs_raw", "harmonized", "method", "scale_factor", "in_calibration", "data_status"])
             wd.writerow(["cell_id", "lat", "lon", "date", "ym", "modis_raw", "viirs_raw", "harmonized"])
-            wp.writerow(["lat", "lon", "date", "ym", "sensor"])
+            wp.writerow(["lat", "lon", "date", "ym", "sensor", "h3_res7"])
             for reg in regions:
                 for lat, lon in cells(reg):
                     cell_id = f"{lat:.2f}_{lon:.2f}"
@@ -163,15 +164,16 @@ def build(out_dir: Path, regions: list[Region] = REGIONS, seed: int = 7, daily_s
                                 for _ in range(min(n, POINTS_PER_CELL_SENSOR)):
                                     cy, cx = prng.choice(centres)
                                     day = prng.choices(range(1, len(w) + 1), weights=w)[0]
-                                    wp.writerow([round(lat + max(-0.5, min(0.5, cy + prng.gauss(0, 0.09))), 4),
-                                                 round(lon + max(-0.5, min(0.5, cx + prng.gauss(0, 0.09))), 4),
-                                                 f"{ym}-{day:02d}", ym, sensor])
+                                    plat = round(lat + max(-0.5, min(0.5, cy + prng.gauss(0, 0.09))), 4)
+                                    plon = round(lon + max(-0.5, min(0.5, cx + prng.gauss(0, 0.09))), 4)
+                                    # Every detection carries its H3 res7 cell, as in the data team's pipeline (step 1).
+                                    wp.writerow([plat, plon, f"{ym}-{day:02d}", ym, sensor, h3.latlng_to_cell(plat, plon, 7)])
 
         con = duckdb.connect()
         specs = {
             "monthly": ("m.csv", "{'cell_id':'VARCHAR','lat':'DOUBLE','lon':'DOUBLE','year_month':'VARCHAR','modis_raw':'INTEGER','viirs_raw':'INTEGER','harmonized':'DOUBLE','method':'VARCHAR','scale_factor':'DOUBLE','in_calibration':'BOOLEAN','data_status':'VARCHAR'}", "year_month, cell_id"),
             "daily": ("d.csv", "{'cell_id':'VARCHAR','lat':'DOUBLE','lon':'DOUBLE','date':'DATE','ym':'VARCHAR','modis_raw':'INTEGER','viirs_raw':'INTEGER','harmonized':'DOUBLE'}", "date, cell_id"),
-            "points": ("p.csv", "{'lat':'DOUBLE','lon':'DOUBLE','date':'DATE','ym':'VARCHAR','sensor':'VARCHAR'}", "date"),
+            "points": ("p.csv", "{'lat':'DOUBLE','lon':'DOUBLE','date':'DATE','ym':'VARCHAR','sensor':'VARCHAR','h3_res7':'VARCHAR'}", "date"),
         }
         counts = {}
         for name, (src, types, order) in specs.items():

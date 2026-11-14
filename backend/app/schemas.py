@@ -62,6 +62,18 @@ class HotspotSample(Camel):
     total: int
 
 
+class HexCell(Camel):
+    h3: str
+    # Days of the month with at least one detection in this cell (1 when a single day is asked for).
+    days: int
+
+
+class HexSample(Camel):
+    cells: list[HexCell]
+    total: int  # res7 cells with fire in the area and period
+    used: int  # res7 cells returned (less than total when the cap cut the quietest cells off)
+
+
 class ExplainRequest(Camel):
     bbox: Bbox
     year_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")

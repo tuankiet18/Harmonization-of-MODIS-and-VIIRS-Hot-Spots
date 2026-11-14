@@ -14,6 +14,8 @@ from .schemas import Bbox, DataMeta
 
 REQUIRED = ("monthly.parquet", "daily.parquet", "points.parquet", "meta.json")
 SERIES_COLUMN = {"harmonized": "harmonized", "modis": "modis_raw", "viirs": "viirs_raw"}
+# The harmonized series is MODIS before this month and S-NPP VIIRS from it (the data team's method).
+HARMONIZE_FROM = "2013-01"
 
 
 class DataError(RuntimeError):
@@ -30,6 +32,8 @@ class Store:
             )
         self.data_dir = data_dir
         self._meta = DataMeta.model_validate(json.loads((data_dir / "meta.json").read_text(encoding="utf-8")))
+        # Optional per-month hex files built by scripts/build_hex_months.py from the data team's world H3 parquet.
+        self.hex_dir = data_dir / "hex" if any((data_dir / "hex").glob("ym=*")) else None
         self.con = duckdb.connect(":memory:")
         for name in ("monthly", "daily", "points"):
             path = (data_dir / f"{name}.parquet").as_posix().replace("'", "''")
@@ -105,6 +109,54 @@ class Store:
             [*params, limit],
         )
         return rows, int(total)
+
+    def hexes(self, b: Bbox, year_month: str, sensors: list[str], day: int | None, limit: int) -> dict[str, Any]:
+        """Detections of one month (or day) grouped into H3 res7 cells, busiest first, at most `limit` cells."""
+        if self.hex_dir is not None:
+            return self._hexes_from_files(b, year_month, sensors, day, limit)
+        where = "ym = ? AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? AND sensor IN (SELECT UNNEST(?))"
+        params: list[Any] = [year_month, *self._box(b), sensors]
+        if day is not None:
+            where += " AND day(date) = ?"
+            params.append(day)
+        total = int(self._rows(f"SELECT COUNT(DISTINCT h3_res7) AS n FROM points WHERE {where}", params)[0]["n"])
+        rows = self._rows(
+            f"""
+            SELECT h3_res7 AS h3, CAST(COUNT(DISTINCT date) AS INTEGER) AS days, COUNT(*) AS n
+            FROM points WHERE {where}
+            GROUP BY h3_res7
+            ORDER BY days DESC, n DESC, h3_res7
+            LIMIT ?
+            """,
+            [*params, limit],
+        )
+        return {"cells": [{"h3": r["h3"], "days": r["days"]} for r in rows], "total": total, "used": len(rows)}
+
+    def _hexes_from_files(self, b: Bbox, year_month: str, sensors: list[str], day: int | None, limit: int) -> dict[str, Any]:
+        month_dir = self.hex_dir / f"ym={year_month}"  # type: ignore[operator]
+        if not any(month_dir.glob("*.parquet")):
+            return {"cells": [], "total": 0, "used": 0}
+        if set(sensors) == {"modis", "viirs"}:  # the harmonized series: one sensor per period, never both
+            sensors = ["modis"] if year_month < HARMONIZE_FROM else ["viirs"]
+        src = (month_dir / "*.parquet").as_posix().replace("'", "''")
+        where = "center_lat BETWEEN ? AND ? AND center_lon BETWEEN ? AND ? AND sensor IN (SELECT UNNEST(?))"
+        params: list[Any] = [*self._box(b), sensors]
+        if day is not None:
+            where += " AND ((days_mask >> ?) & 1) = 1"
+            params.append(day - 1)
+        days_expr = "1" if day is not None else "bit_count(bit_or(days_mask))"
+        total = self._rows(f"SELECT COUNT(DISTINCT h3_res7) AS n FROM read_parquet('{src}') WHERE {where}", params)[0]["n"]
+        rows = self._rows(
+            f"""
+            SELECT h3_res7 AS h3, CAST({days_expr} AS INTEGER) AS days, CAST(SUM(points) AS BIGINT) AS n
+            FROM read_parquet('{src}') WHERE {where}
+            GROUP BY h3_res7
+            ORDER BY days DESC, n DESC, h3_res7
+            LIMIT ?
+            """,
+            [*params, limit],
+        )
+        return {"cells": [{"h3": r["h3"], "days": r["days"]} for r in rows], "total": int(total), "used": len(rows)}
 
     def export_monthly(self, b: Bbox, start: str, end: str, limit: int) -> list[dict[str, Any]]:
         return [r for r in self.monthly(b) if start <= r["yearMonth"] <= end][:limit]
