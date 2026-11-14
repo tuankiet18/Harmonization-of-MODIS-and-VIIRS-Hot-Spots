@@ -47,10 +47,30 @@ Giao diện chỉ phụ thuộc interface `DataSource` (`web/src/data/types.ts`)
 - **Chưa có NOAA-20 và NOAA-21 trong chuỗi.** S-NPP ngừng từ 2026-11-02, cần cầu nối S-NPP → NOAA-20 → NOAA-21 khi mở rộng sang 2026.
 - **Giai đoạn 2000-11 đến 2002-06 chỉ có Terra**, thấy ít hơn nhiều so với Terra + Aqua; web ghi chú rõ nhưng chưa bù.
 
+## Bản đồ lục giác H3 (theo team data)
+
+Bản đồ vẽ **ô lục giác H3 res7 (~5,16 km²)**, giống bản đồ trong notebook của team, thay cho chấm điểm thô.
+
+- Bảng điểm (`points.parquet`) có thêm cột **`h3_res7`** (mã ô H3 của từng điểm phát hiện, chính là Bước 1 trong `03_unified_h3_pipeline.md`).
+- Backend gom theo ô: `GET /api/hexes?box&ym[&source][&day][&limit]` trả `{cells: [{h3, days}], total, used}`. `days` là số ngày trong tháng ô đó có cháy (bằng 1 khi chọn một ngày), tức số **ô-ngày** của ô res7. `total` là số ô res7 có cháy, `used` là số ô trả về (nhỏ hơn `total` khi bị cắt bởi giới hạn `MAX_HEXES`).
+- Web tự gộp theo độ phân giải phù hợp với kích thước vùng chọn (res7 cho vùng nhỏ, res4 cho vùng cỡ 10°…): giá trị của lục giác lớn là tổng ô-ngày của các ô res7 bên trong, nên cùng đơn vị với toàn ứng dụng. Chú giải đổi theo giá trị lớn nhất.
+- **Dữ liệu thật của team (`parquet_h3_world`)** là bảng bước 2: mỗi dòng một (ngày, ngày/đêm, `sensor_family`, `h3_res7`, `country`) kèm `center_lat/lon`, `point_count`, `frp`, `conf_tier`. Script `backend/scripts/build_hex_months.py` nén thành mỗi (ô, cảm biến, nước, tháng) một dòng trong `<DATA_DIR>/hex/ym=YYYY-MM/*.parquet`, với `days_mask` (bit d-1 bật khi ô có cháy ngày d, nên số bit bật là số ngày có cháy và lọc theo ngày được) và `points`. Có thư mục `hex/` thì `/api/hexes` chỉ đọc từ đó; tháng nào không có file thì trả rỗng.
+- Chuỗi hiển thị khi `source=harmonized`: **MODIS trước 2013-01, VIIRS từ 2013-01** (số ngày gốc, chưa nhân hệ số; nhân hệ số không có nghĩa với số ngày của từng ô). Nên tổng các lục giác có thể khác số trên lịch ở các năm trước 2013.
+- Giới hạn của dữ liệu đầu vào: không có cột `type` nên không loại được nguồn nhiệt cố định; VIIRS từ 2018 gộp S-NPP và NOAA-20 nên số ô-ngày có bậc nhảy; chỉ bỏ hàng `conf_tier = low` (như notebook của team).
+- Cột `cell_id` của bảng tháng trong dữ liệu thật nên là mã H3 res7 (mẫu giả vẫn dùng lưới 1°).
+
+## Chọn quốc gia
+
+- Đường biên lấy từ Natural Earth 50m (gói npm `world-atlas`, miền công cộng), tải riêng khi trang mở (khoảng 750 KB), 241 vùng. Chọn một nước thì bản đồ vẽ đường biên thay cho hình chữ nhật và thu phóng vừa nước đó.
+- Hộp để hỏi API là hộp của phần đất chính: các đảo xa (Guiana thuộc Pháp, Hawaii-xa...) và phần vắt qua kinh tuyến 180 không kéo giãn hộp.
+- Lục giác chỉ giữ ô có **tâm nằm trong biên giới** (lọc ở trình duyệt, không cần ghép tên nước).
+- **Chưa làm:** số liệu theo tháng (lịch, KPI, CSV) vẫn tính theo hộp, nên gồm cả ô của nước láng giềng nằm trong hộp. Lọc đúng theo nước cần bảng tháng có cột nước và bảng tên nước khớp giữa dữ liệu (`South_Sudan`) và bản đồ (`S. Sudan`).
+- Cột `cell_id` của bảng tháng trong dữ liệu thật nên là mã H3 res7 (mẫu giả vẫn dùng lưới 1°).
+
 ## Điểm cháy trên bản đồ (tùy chọn nhưng nên có)
 
 Bản đồ vẽ **điểm phát hiện gốc** của tháng đang xem qua `DataSource.points(bbox, yearMonth, source)`.
-Cần file điểm theo tháng (hoặc theo tile/tháng), mỗi dòng: `lat, lon, sensor` (`modis` | `viirs`), có thể thêm `frp`, `confidence`.
+Cần file điểm theo tháng (hoặc theo tile/tháng), mỗi dòng: `lat, lon, sensor` (`modis` | `viirs`), `h3_res7`, có thể thêm `frp`, `confidence`.
 Web app tự lấy mẫu tối đa khoảng 4.000 điểm mỗi lần vẽ và ghi rõ "vẽ X trên Y điểm". Nếu chưa có file điểm, bản đồ chỉ hiện khung vùng.
 
 ## Dữ liệu theo ngày (cho lịch ngày và bản đồ theo ngày)

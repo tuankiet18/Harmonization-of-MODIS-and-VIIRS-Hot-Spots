@@ -55,6 +55,17 @@ regenerate it, otherwise the volume keeps the old numbers: `docker compose build
 4. HTTPS: put Caddy or an AWS load balancer with a certificate in front of `web`; plain nginx here serves HTTP only.
 5. The rate limiter is in memory, so it only holds for one `api` instance.
 
+## Real hexagon data in Docker
+
+Build the per-month hex files from the data team's parquet straight into the volume, then restart the api:
+
+```bash
+docker compose run --rm --no-deps -v "<folder with the parquet files>:/in:ro" api python scripts/build_hex_months.py --src "/in/**/*.parquet" --out /srv/data/sample/hex
+docker compose restart api
+```
+
+On Windows Git Bash prefix the first line with `MSYS_NO_PATHCONV=1`. Months without a file show no hexagons; see `backend/README.md`.
+
 ## How the site gets its data
 
 The site reads `/api/meta`, `/api/monthly`, `/api/daily` and `/api/points` (`web/src/data/ApiDataSource.ts`). Which source is used is
