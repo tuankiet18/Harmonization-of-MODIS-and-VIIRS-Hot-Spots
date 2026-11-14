@@ -1,3 +1,4 @@
+import { cellToLatLng } from 'h3-js';
 import { useEffect, useMemo, useState } from 'react';
 import Details from './components/Details';
 import FireCalendar, { type CalendarMode } from './components/FireCalendar';
@@ -12,14 +13,17 @@ import Toolbar from './components/Toolbar';
 import { btn } from './components/ui';
 import { dataSource } from './data';
 import { REGIONS } from './data/regions';
-import type { Bbox, DataMeta, DateRange, DayPoint, HotspotSample, MonthlyPoint, Source } from './data/types';
+import type { Bbox, DataMeta, DateRange, DayPoint, HexSample, MonthlyPoint, Source } from './data/types';
 import { useI18n } from './i18n';
 import { valueOf } from './lib/aggregate';
 import { buildCsv, downloadText } from './lib/csv';
+import { loadCountries, type Country } from './lib/countries';
+import { pointInGeometry } from './lib/geo';
+import { aggregateCells, HEX_AREA_KM2, hexResolution, hexResolutionForZoom, hexSteps } from './lib/hex';
 import { computeKpis } from './lib/stats';
 import { decodeState, encodeState } from './lib/urlState';
 
-const NO_POINTS: HotspotSample = { points: [], total: 0 };
+const NO_HEXES: HexSample = { cells: [], total: 0, used: 0 };
 const PRESET_BOXES = Object.fromEntries(REGIONS.map((r) => [r.id, r.bbox]));
 // Only the area, series and month are read before the data limits are known; the range is read after.
 const WIDE = { min: '0000-01', max: '9999-12' };
@@ -32,7 +36,12 @@ export default function App() {
   const [source, setSource] = useState<Source>(initial.source ?? 'harmonized');
   const [mode, setMode] = useState<CalendarMode>('count');
   const [regionId, setRegionId] = useState(initial.regionId ?? 'amazon');
-  const [bbox, setBbox] = useState<Bbox | null>(initial.bbox !== undefined ? initial.bbox : REGIONS[0].bbox);
+  // A shared country link has no box until the borders have loaded.
+  const [bbox, setBbox] = useState<Bbox | null>(initial.regionId === 'country' ? null : initial.bbox !== undefined ? initial.bbox : REGIONS[0].bbox);
+  // Zoom and latitude of the map once it settles; hexagon size follows it.
+  const [view, setView] = useState<{ zoom: number; lat: number } | null>(null);
+  const [countries, setCountries] = useState<Country[]>([]);
+  const [country, setCountry] = useState<Country | null>(null);
   const [fitSignal, setFitSignal] = useState(0);
   const [drawing, setDrawing] = useState(false);
   const [range, setRange] = useState<DateRange>({ start: '2000-11', end: '2026-10' });
@@ -42,11 +51,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [selected, setSelected] = useState<string | null>(initial.month ?? null);
-  const [sample, setSample] = useState<HotspotSample>(NO_POINTS);
+  const [hexes, setHexes] = useState<HexSample>(NO_HEXES);
   const [dayPick, setDayPick] = useState<{ ym: string; day: number } | null>(null);
   const [daily, setDaily] = useState<DayPoint[]>([]);
-  const [showPoints, setShowPoints] = useState(false);
-  const [pointsLoading, setPointsLoading] = useState(false);
+  // On by default: the hexagons are the point of the map, so they should not hide behind a folded section.
+  const [showHexes, setShowHexes] = useState(true);
+  const [hexesLoading, setHexesLoading] = useState(true);
 
   useEffect(() => {
     dataSource.meta().then((m) => {
@@ -58,12 +68,33 @@ export default function App() {
     });
   }, []);
 
+  // Country borders are a separate download (about 750 KB), so they load after the first paint.
+  useEffect(() => {
+    let alive = true;
+    loadCountries().then((list) => {
+      if (!alive) return;
+      setCountries(list);
+      if (initial.regionId !== 'country') return;
+      const found = list.find((c) => c.id === initial.countryId);
+      if (found) {
+        setCountry(found);
+        setBbox(found.bbox);
+        setFitSignal((n) => n + 1);
+      } else {
+        setRegionId('none');
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [initial]);
+
   // Keep the address bar in step with the view so any state can be shared as a link.
   useEffect(() => {
     if (!synced) return;
-    const q = encodeState({ regionId, bbox, range, source, month: selected }, limits);
+    const q = encodeState({ regionId, countryId: country?.id ?? null, bbox, range, source, month: selected }, limits);
     window.history.replaceState(null, '', `${window.location.pathname}?${q}`);
-  }, [synced, regionId, bbox, range, source, selected, limits]);
+  }, [synced, regionId, country, bbox, range, source, selected, limits]);
 
   useEffect(() => {
     if (!bbox) {
@@ -116,50 +147,63 @@ export default function App() {
   }, [bbox, focus, loading]);
 
   useEffect(() => {
-    if (!showPoints || !bbox || !focus || loading) {
-      setSample(NO_POINTS);
-      setPointsLoading(false);
+    if (!showHexes || !bbox || !focus || loading) {
+      setHexes(NO_HEXES);
+      setHexesLoading(false);
       return;
     }
     let cancelled = false;
-    setPointsLoading(true);
-    const done = (s: HotspotSample) => {
+    setHexesLoading(true);
+    const done = (s: HexSample) => {
       if (cancelled) return;
-      setSample(s);
-      setPointsLoading(false);
+      setHexes(s);
+      setHexesLoading(false);
     };
     dataSource
-      .points(bbox, focus, source, day ?? undefined)
+      .hexes(bbox, focus, source, day ?? undefined)
       .then(done)
-      .catch(() => done(NO_POINTS));
+      .catch(() => done(NO_HEXES));
     return () => {
       cancelled = true;
     };
-  }, [bbox, focus, source, loading, day, showPoints]);
+  }, [bbox, focus, source, loading, day, showHexes]);
 
   const region = REGIONS.find((r) => r.id === regionId);
-  const place = (region && (region.enInSentence ?? region.name)) || t('placeCustom');
+  const place = country ? country.name : (region && (region.enInSentence ?? region.name)) || t('placeCustom');
 
   const pickRegion = (id: string) => {
     const r = REGIONS.find((x) => x.id === id);
     if (!r) return;
     setRegionId(id);
+    setCountry(null);
     setBbox(r.bbox);
+    setFitSignal((n) => n + 1);
+    setDrawing(false);
+  };
+  const pickCountry = (id: string) => {
+    const c = countries.find((x) => x.id === id);
+    if (!c) return;
+    setRegionId('country');
+    setCountry(c);
+    setBbox(c.bbox);
     setFitSignal((n) => n + 1);
     setDrawing(false);
   };
   const applyBbox = (b: Bbox) => {
     setRegionId('custom');
+    setCountry(null);
     setBbox(b);
     setFitSignal((n) => n + 1);
   };
   const drawn = (b: Bbox) => {
     setRegionId('custom');
+    setCountry(null);
     setBbox(b);
     setDrawing(false);
   };
   const clear = () => {
     setRegionId('none');
+    setCountry(null);
     setBbox(null);
     setDrawing(false);
     setSelected(null);
@@ -182,13 +226,28 @@ export default function App() {
     downloadText(`firecalendar_${source}_${range.start}_${range.end}.csv`, buildCsv(inRange, meta, bbox, range, source));
   };
 
-  const caption = pointsLoading
+  // The map draws bigger hexagons for bigger areas; their value is the res7 cell-days inside them.
+  const hexRes = view ? hexResolutionForZoom(view.zoom, view.lat) : hexResolution(bbox);
+  const hexView = useMemo(() => {
+    const res = hexRes;
+    // A country keeps only the cells whose centre is inside its borders (the box also holds its neighbours' cells).
+    const cells = country
+      ? hexes.cells.filter((c) => {
+          const [lat, lon] = cellToLatLng(c.h3);
+          return pointInGeometry(lon, lat, country.geometry);
+        })
+      : hexes.cells;
+    const items = aggregateCells(cells, res);
+    return { res, items, steps: hexSteps(items[0]?.value ?? 1), km2: Math.round(HEX_AREA_KM2[res]).toLocaleString('en-US') };
+  }, [hexes, hexRes, country]);
+
+  const caption = hexesLoading
     ? t('mapCaptionLoading')
-    : sample.total === 0
+    : hexes.total === 0
       ? t('mapCaptionNone')
-      : sample.points.length < sample.total
-        ? t('mapCaptionSample', { shown: fmt(sample.points.length), n: fmt(sample.total) })
-        : t('mapCaptionAll', { n: fmt(sample.total) });
+      : hexes.used < hexes.total
+        ? t('mapCaptionSample', { cells: fmt(hexView.items.length), km2: hexView.km2, shown: fmt(hexes.used), n: fmt(hexes.total) })
+        : t('mapCaptionAll', { cells: fmt(hexView.items.length), km2: hexView.km2, n: fmt(hexes.total) });
 
   return (
     <div className="flex min-h-full flex-col lg:h-dvh">
@@ -210,13 +269,20 @@ export default function App() {
 
       <main className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1.08fr)_minmax(520px,1fr)] lg:grid-rows-[minmax(0,1fr)]">
         <div className="relative h-[42vh] min-h-72 lg:h-auto lg:min-h-0">
-          <MapPanel bbox={bbox} fitSignal={fitSignal} drawing={drawing} onDrawn={drawn} points={showPoints ? sample.points : []} onPickRegion={pickRegion} />
-          <MapLegend hasArea={!!bbox} showPoints={showPoints && sample.points.length > 0} />
+          <MapPanel bbox={bbox} fitSignal={fitSignal} drawing={drawing} onDrawn={drawn} cells={showHexes ? hexView.items : []} outline={country ? country.geometry : null} onView={setView} steps={hexView.steps} res={hexView.res} onPickRegion={pickRegion} />
+          {showHexes && bbox && !loading && !hexesLoading && hexes.total === 0 && (
+            <p className="pointer-events-none absolute bottom-10 right-3 z-10 max-w-64 rounded-lg bg-surface/95 px-3 py-2 text-sm shadow-sm" role="status">
+              {t('mapCaptionNone')}
+            </p>
+          )}
+          <MapLegend hasArea={!!bbox} hexMode={showHexes && hexes.cells.length > 0 ? (day !== null ? 'day' : 'month') : null} steps={hexView.steps} res={hexView.res} />
           <MapControls
             regionId={regionId}
+            countries={countries}
+            countryId={country?.id ?? null}
             bbox={bbox}
             drawing={drawing}
-            onRegion={pickRegion}
+            onRegion={(id) => (id.startsWith('country:') ? pickCountry(id.slice('country:'.length)) : pickRegion(id))}
             onBbox={applyBbox}
             onDrawToggle={() => setDrawing((d) => !d)}
             onClear={clear}
@@ -225,7 +291,7 @@ export default function App() {
 
         <div className="min-w-0 bg-surface px-4 lg:overflow-y-auto lg:border-l lg:border-line lg:px-7">
           <Toolbar
-            areaName={region ? region.name : regionId === 'custom' ? t('customArea') : null}
+            areaName={country ? country.name : region ? region.name : regionId === 'custom' ? t('customArea') : null}
             range={range}
             limits={limits}
             onRange={setRange}
@@ -310,10 +376,10 @@ export default function App() {
                 day={day}
                 onPickDay={(d) => {
                   setDayPick(d === null ? null : { ym: focusPoint.yearMonth, day: d });
-                  if (d !== null) setShowPoints(true);
+                  if (d !== null) setShowHexes(true);
                 }}
-                showPoints={showPoints}
-                onShowPoints={setShowPoints}
+                showHexes={showHexes}
+                onShowHexes={setShowHexes}
                 caption={caption}
               />
             </>

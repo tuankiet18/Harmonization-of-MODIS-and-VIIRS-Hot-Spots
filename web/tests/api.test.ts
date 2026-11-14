@@ -28,14 +28,14 @@ describe('ApiDataSource', () => {
     expect(calls[0]).toBe('https://x.test/api/daily?west=98&south=12&east=108&north=22&ym=2024-03');
   });
 
-  it('passes series and day to /api/points only when given', async () => {
-    const sample = { points: [{ lat: 1, lon: 2, sensor: 'viirs' }], total: 9 };
+  it('passes series and day to /api/hexes only when given', async () => {
+    const sample = { cells: [{ h3: '8765a8d9bffffff', days: 3 }], total: 9, used: 9 };
     const a = fake(sample);
-    expect(await new ApiDataSource('', a.fn).points(bbox, '2026-09', 'viirs', 5)).toEqual(sample);
-    expect(a.calls[0]).toBe('/api/points?west=98&south=12&east=108&north=22&ym=2026-09&source=viirs&day=5');
+    expect(await new ApiDataSource('', a.fn).hexes(bbox, '2026-09', 'viirs', 5)).toEqual(sample);
+    expect(a.calls[0]).toBe('/api/hexes?west=98&south=12&east=108&north=22&ym=2026-09&source=viirs&day=5');
     const b = fake(sample);
-    await new ApiDataSource('', b.fn).points(bbox, '2026-09', 'harmonized');
-    expect(b.calls[0]).toBe('/api/points?west=98&south=12&east=108&north=22&ym=2026-09&source=harmonized');
+    await new ApiDataSource('', b.fn).hexes(bbox, '2026-09', 'harmonized');
+    expect(b.calls[0]).toBe('/api/hexes?west=98&south=12&east=108&north=22&ym=2026-09&source=harmonized');
   });
 
   it('reads /api/meta', async () => {

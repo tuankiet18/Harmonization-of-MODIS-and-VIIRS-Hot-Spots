@@ -1,6 +1,7 @@
+import { latLngToCell } from 'h3-js';
 import { aggregateMonthly } from '../lib/aggregate';
 import { REGIONS } from './regions';
-import type { Bbox, DataMeta, DataSource, DayPoint, HotspotPoint, HotspotSample, MonthRecord, MonthlyPoint, Source } from './types';
+import type { Bbox, DataMeta, DataSource, DayPoint, HexSample, HotspotPoint, HotspotSample, MonthRecord, MonthlyPoint, Source } from './types';
 
 /**
  * Synthetic data with the same shape as the real harmonized dataset.
@@ -215,20 +216,47 @@ export class MockDataSource implements DataSource {
       const centres = [0, 1, 2].map(() => [(place() - 0.5) * step * 0.7, (place() - 0.5) * step * 0.7]);
       for (const s of sensors) {
         const rng = mulberry32(hashStr(`${r.cellId}:${yearMonth}:${s}:${day ?? 0}`));
-        const n = Math.round(count(r, s) * share[s] * keep);
+        // Random rounding keeps the expected count when a cell's share of one day is below 1.
+        const want = count(r, s) * share[s] * keep;
+        const n = Math.floor(want) + (rng() < want - Math.floor(want) ? 1 : 0);
         for (let i = 0; i < n; i++) {
           const c = centres[Math.floor(rng() * centres.length)];
           const half = step / 2;
           points.push({
-            lat: r.lat + Math.max(-half, Math.min(half, c[0] + gauss(rng) * step * 0.09)),
-            lon: r.lon + Math.max(-half, Math.min(half, c[1] + gauss(rng) * step * 0.09)),
+            lat: r.lat + Math.max(-half, Math.min(half, c[0] + gauss(rng) * step * 0.03)),
+            lon: r.lon + Math.max(-half, Math.min(half, c[1] + gauss(rng) * step * 0.03)),
             sensor: s,
+            day: day ?? pickDay(rng, w),
           });
         }
       }
     }
     return { points, total };
   }
+
+  /** The fire map as H3 res7 hexagons, built from the same synthetic detections as points(). */
+  async hexes(bbox: Bbox, yearMonth: string, source: Source, day?: number): Promise<HexSample> {
+    const { points } = await this.points(bbox, yearMonth, source, day);
+    const daysByCell = new Map<string, Set<number>>();
+    for (const p of points) {
+      const id = latLngToCell(p.lat, p.lon, 7);
+      const set = daysByCell.get(id);
+      if (set) set.add(p.day);
+      else daysByCell.set(id, new Set([p.day]));
+    }
+    const cells = [...daysByCell].map(([h3, d]) => ({ h3, days: d.size })).sort((a, b) => b.days - a.days || (a.h3 < b.h3 ? -1 : 1));
+    return { cells, total: cells.length, used: cells.length };
+  }
+}
+
+/** Pick a day of the month with probability proportional to its weight. */
+function pickDay(rng: () => number, w: number[]): number {
+  let r = rng() * w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < w.length; i++) {
+    r -= w[i];
+    if (r <= 0) return i + 1;
+  }
+  return w.length;
 }
 
 const MAX_POINTS = 4000;

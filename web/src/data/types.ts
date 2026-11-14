@@ -41,6 +41,7 @@ export interface HotspotPoint {
   lat: number;
   lon: number;
   sensor: 'modis' | 'viirs';
+  day: number; // day of the month, 1-31
 }
 
 /** Detections for one month; `points` may be a sample of `total` to keep the map fast. */
@@ -57,12 +58,26 @@ export interface DayPoint {
   harmonized: number | null;
 }
 
+/** One H3 res7 cell (~5 km2) on the fire map. */
+export interface HexCell {
+  h3: string;
+  /** Days of the month with at least one detection in this cell (1 when a single day was asked for). */
+  days: number;
+}
+
+/** Fire map for one month (or one day) as hexagons. */
+export interface HexSample {
+  cells: HexCell[];
+  total: number; // res7 cells with fire in the area and period
+  used: number; // res7 cells returned (less than total when the quietest cells were cut off)
+}
+
 export interface DataSource {
   meta(): Promise<DataMeta>;
   /** One point per month, summed over the cells whose centre lies inside bbox. */
   monthly(bbox: Bbox): Promise<MonthlyPoint[]>;
-  /** Raw detections inside bbox for one month, or for one day of it. 'harmonized' returns both sensors. */
-  points(bbox: Bbox, yearMonth: string, source: Source, day?: number): Promise<HotspotSample>;
+  /** Fire map inside bbox for one month, or one day of it, as H3 res7 hexagons. 'harmonized' uses both sensors. */
+  hexes(bbox: Bbox, yearMonth: string, source: Source, day?: number): Promise<HexSample>;
   /** Day-by-day totals for one month inside bbox. Days add up to the monthly totals. */
   daily(bbox: Bbox, yearMonth: string): Promise<DayPoint[]>;
 }

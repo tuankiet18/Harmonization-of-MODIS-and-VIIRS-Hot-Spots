@@ -1,7 +1,8 @@
 import type { Bbox, DateRange, Source } from '../data/types';
 
 export interface ShareState {
-  regionId: string; // preset id, 'custom' or 'none'
+  regionId: string; // preset id, 'custom', 'country' or 'none'
+  countryId: string | null; // set when regionId is 'country'
   bbox: Bbox | null;
   range: DateRange;
   source: Source;
@@ -21,6 +22,7 @@ const r3 = (n: number) => Math.round(n * 1000) / 1000;
 export function encodeState(s: ShareState, limits: Limits): string {
   const p = new URLSearchParams();
   p.set('area', s.regionId);
+  if (s.regionId === 'country' && s.countryId) p.set('country', s.countryId);
   if (s.regionId === 'custom' && s.bbox) p.set('bbox', [s.bbox.west, s.bbox.south, s.bbox.east, s.bbox.north].map(r3).join(','));
   if (s.range.start !== limits.min) p.set('from', s.range.start);
   if (s.range.end !== limits.max) p.set('to', s.range.end);
@@ -41,6 +43,13 @@ export function decodeState(search: string, regions: Record<string, Bbox>, limit
   } else if (area && regions[area]) {
     out.regionId = area;
     out.bbox = regions[area];
+  } else if (area === 'country') {
+    // The box comes from the country's borders, which load after the page does.
+    const id = p.get('country');
+    if (id) {
+      out.regionId = 'country';
+      out.countryId = id;
+    }
   } else if (area === 'custom') {
     const v = (p.get('bbox') ?? '').split(',').map(Number);
     if (v.length === 4 && v.every(Number.isFinite)) {

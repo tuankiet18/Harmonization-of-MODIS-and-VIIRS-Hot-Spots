@@ -6,8 +6,10 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import { REGIONS, WORLD_VIEW } from '../data/regions';
 import { useI18n } from '../i18n';
+import { HEX_AREA_KM2, hexColorExpression, hexGeoJson, type HexStep, type HexValue } from '../lib/hex';
 import { COLORS } from '../lib/theme';
-import type { Bbox, HotspotPoint } from '../data/types';
+import type { Bbox } from '../data/types';
+import { countryMask, type CountryGeometry } from '../lib/geo';
 
 interface Props {
   bbox: Bbox | null;
@@ -15,7 +17,14 @@ interface Props {
   fitSignal: number;
   drawing: boolean;
   onDrawn: (b: Bbox) => void;
-  points: HotspotPoint[];
+  cells: HexValue[];
+  /** A country's borders, drawn instead of the rectangle when a country is selected. */
+  outline: CountryGeometry | null;
+  /** Called when the map settles after a move or zoom, so the hexagon size can follow the zoom. */
+  onView: (v: { zoom: number; lat: number }) => void;
+  /** Legend steps the hexagons are coloured by, and the H3 resolution they are drawn at. */
+  steps: HexStep[];
+  res: number;
   onPickRegion: (id: string) => void;
 }
 
@@ -32,25 +41,29 @@ const PRESETS: FeatureCollection = {
   type: 'FeatureCollection',
   features: REGIONS.map((r) => ({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring(r.bbox)] } })),
 };
-const toGeo = (pts: HotspotPoint[]): FeatureCollection => ({
-  type: 'FeatureCollection',
-  features: pts.map((p) => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [p.lon, p.lat] } })),
-});
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, points, onPickRegion }: Props) {
+export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, cells, outline, onView, steps, res, onPickRegion }: Props) {
   const { t } = useI18n();
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const ready = useRef(false);
   const labels = useRef<{ id: string; el: HTMLButtonElement }[]>([]);
   const bboxRef = useRef(bbox);
-  const pointsRef = useRef(points);
+  const cellsRef = useRef(cells);
+  const outlineRef = useRef(outline);
+  const onViewRef = useRef(onView);
+  const stepsRef = useRef(steps);
+  const resRef = useRef(res);
   const drawingRef = useRef(drawing);
   const onDrawnRef = useRef(onDrawn);
   const onPickRef = useRef(onPickRegion);
   bboxRef.current = bbox;
-  pointsRef.current = points;
+  cellsRef.current = cells;
+  outlineRef.current = outline;
+  onViewRef.current = onView;
+  stepsRef.current = steps;
+  resRef.current = res;
   drawingRef.current = drawing;
   onDrawnRef.current = onDrawn;
   onPickRef.current = onPickRegion;
@@ -59,13 +72,20 @@ export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, points, on
     const m = map.current;
     if (!m) return;
     const b = bboxRef.current;
-    (m.getSource('aoi') as GeoJSONSource | undefined)?.setData(b ? rect(b) : EMPTY);
+    const o = outlineRef.current;
+    // A selected country is shown by its borders; any other area by its rectangle.
+    (m.getSource('aoi') as GeoJSONSource | undefined)?.setData(b && !o ? rect(b) : EMPTY);
+    (m.getSource('country') as GeoJSONSource | undefined)?.setData(o ? { type: 'Feature', properties: {}, geometry: o } : EMPTY);
+    (m.getSource('mask') as GeoJSONSource | undefined)?.setData((o && countryMask(o)) || EMPTY);
     // Preset outlines and their labels are the way in when no area is chosen yet.
     m.setLayoutProperty('presets-line', 'visibility', b ? 'none' : 'visible');
     for (const l of labels.current) l.el.hidden = !!b;
   };
-  const syncPoints = () => {
-    (map.current?.getSource('hotspots') as GeoJSONSource | undefined)?.setData(toGeo(pointsRef.current));
+  const syncHexes = () => {
+    const m = map.current;
+    if (!m) return;
+    (m.getSource('hexes') as GeoJSONSource | undefined)?.setData(hexGeoJson(cellsRef.current));
+    m.setPaintProperty('hexes-fill', 'fill-color', hexColorExpression(stepsRef.current) as never);
   };
   const fit = () => {
     const m = map.current;
@@ -120,34 +140,39 @@ export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, points, on
       m.addLayer({ id: 'presets-line', type: 'line', source: 'presets', paint: { 'line-color': COLORS.ember, 'line-width': 1.5, 'line-dasharray': [3, 2] } });
       m.addSource('aoi', { type: 'geojson', data: EMPTY });
       m.addLayer({ id: 'aoi-fill', type: 'fill', source: 'aoi', paint: { 'fill-color': COLORS.ink, 'fill-opacity': 0.05 } });
-      m.addSource('hotspots', { type: 'geojson', data: EMPTY });
-      m.addLayer({
-        id: 'hotspots-glow',
-        type: 'circle',
-        source: 'hotspots',
-        paint: {
-          'circle-color': '#F29A35',
-          'circle-blur': 1,
-          'circle-opacity': 0.22,
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 4, 6, 9, 10, 18],
-        },
-      });
-      m.addLayer({
-        id: 'hotspots-dot',
-        type: 'circle',
-        source: 'hotspots',
-        paint: {
-          'circle-color': COLORS.ember,
-          'circle-opacity': 0.8,
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 1.2, 6, 2.4, 10, 5],
-        },
-      });
+      m.addSource('country', { type: 'geojson', data: EMPTY });
+      m.addLayer({ id: 'country-fill', type: 'fill', source: 'country', paint: { 'fill-color': COLORS.ink, 'fill-opacity': 0.05 } });
+      m.addSource('hexes', { type: 'geojson', data: EMPTY });
+      // H3 hexagons shaded by fire cell-days inside them (same steps as the legend).
+      m.addLayer({ id: 'hexes-fill', type: 'fill', source: 'hexes', paint: { 'fill-color': hexColorExpression(stepsRef.current) as never, 'fill-opacity': 0.78 } });
+      m.addLayer({ id: 'hexes-line', type: 'line', source: 'hexes', paint: { 'line-color': COLORS.ink, 'line-opacity': 0.35, 'line-width': 0.6 } });
+      // A translucent veil over everything outside the country, so hexagons that overhang its border fade out.
+      m.addSource('mask', { type: 'geojson', data: EMPTY });
+      m.addLayer({ id: 'mask-fill', type: 'fill', source: 'mask', paint: { 'fill-color': '#EDF0EC', 'fill-opacity': 0.72 } });
       m.addLayer({ id: 'aoi-line', type: 'line', source: 'aoi', paint: { 'line-color': COLORS.ink, 'line-width': 2, 'line-dasharray': [2, 1.5] } });
+      m.addLayer({ id: 'country-line', type: 'line', source: 'country', paint: { 'line-color': COLORS.ink, 'line-width': 2 } });
       ready.current = true;
       syncArea();
-      syncPoints();
+      syncHexes();
       fit();
     });
+    const reportView = () => onViewRef.current({ zoom: m.getZoom(), lat: m.getCenter().lat });
+    m.on('load', reportView);
+    m.on('moveend', reportView);
+
+    // Click a hexagon to read how many days it had fire.
+    m.on('click', 'hexes-fill', (e) => {
+      const f = e.features?.[0];
+      if (!f || drawingRef.current) return;
+      const value = Number(f.properties?.value);
+      const text =
+        resRef.current === 7
+          ? value === 1 ? t('hexOneDay') : t('hexDays', { n: value })
+          : t('hexCellDays', { n: value, km2: Math.round(HEX_AREA_KM2[resRef.current] ?? 0).toLocaleString('en-US') });
+      new maplibregl.Popup({ closeButton: false, offset: 4 }).setLngLat(e.lngLat).setText(text).addTo(m);
+    });
+    m.on('mouseenter', 'hexes-fill', () => !drawingRef.current && (m.getCanvas().style.cursor = 'pointer'));
+    m.on('mouseleave', 'hexes-fill', () => !drawingRef.current && (m.getCanvas().style.cursor = ''));
 
     // Rectangle drawing (mouse + touch)
     let start: maplibregl.LngLat | null = null;
@@ -189,11 +214,11 @@ export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, points, on
 
   useEffect(() => {
     if (ready.current) syncArea();
-  }, [bbox]);
+  }, [bbox, outline]);
 
   useEffect(() => {
-    if (ready.current) syncPoints();
-  }, [points]);
+    if (ready.current) syncHexes();
+  }, [cells, steps]);
 
   useEffect(() => {
     if (ready.current) fit();

@@ -112,7 +112,7 @@ describe('period presets', () => {
 describe('share-link state', () => {
   const regions = { amazon: { west: -66, south: -14, east: -52, north: -4 } };
   const limits = { min: '2000-11', max: '2026-10' };
-  const base = { regionId: 'amazon', bbox: regions.amazon, range: { start: '2000-11', end: '2026-10' }, source: 'harmonized' as const, month: null };
+  const base = { regionId: 'amazon', countryId: null, bbox: regions.amazon, range: { start: '2000-11', end: '2026-10' }, source: 'harmonized' as const, month: null };
 
   it('omits everything that is a default', () => {
     expect(encodeState(base, limits)).toBe('area=amazon');
@@ -132,6 +132,12 @@ describe('share-link state', () => {
     expect(decodeState('area=atlantis&from=banana&src=x&month=2019-13', regions, limits)).toEqual({});
     expect(decodeState('area=custom&bbox=5,5,1,1', regions, limits)).toEqual({});
     expect(decodeState('from=2030-01&to=2031-01', regions, limits)).toEqual({});
+  });
+  it('round-trips a country by its id; the box is filled in once the borders are loaded', () => {
+    const s = { ...base, regionId: 'country', countryId: '704', bbox: { west: 102, south: 8, east: 110, north: 24 } };
+    expect(encodeState(s, limits)).toBe('area=country&country=704');
+    expect(decodeState('area=country&country=704', regions, limits)).toEqual({ regionId: 'country', countryId: '704' });
+    expect(decodeState('area=country', regions, limits)).toEqual({});
   });
   it('encodes no area as an empty area state', () => {
     expect(encodeState({ ...base, regionId: 'none', bbox: null }, limits)).toBe('area=none');

@@ -16,13 +16,13 @@ interface Props {
   daily: DayPoint[];
   day: number | null;
   onPickDay: (day: number | null) => void;
-  showPoints: boolean;
-  onShowPoints: (v: boolean) => void;
+  showHexes: boolean;
+  onShowHexes: (v: boolean) => void;
   caption: string;
 }
 
-/** Everything secondary, folded away: how the numbers are made, raw series, trend, daily calendar, map points. */
-export default function Details({ point, inRange, source, onSource, meta, focus, onSelect, daily, day, onPickDay, showPoints, onShowPoints, caption }: Props) {
+/** Everything secondary, folded away: how the numbers are made, raw series, trend, daily calendar, map hexagons. */
+export default function Details({ point, inRange, source, onSource, meta, focus, onSelect, daily, day, onPickDay, showHexes, onShowHexes, caption }: Props) {
   const { t } = useI18n();
   return (
     <details className="group border-t border-line py-4">
@@ -62,10 +62,10 @@ export default function Details({ point, inRange, source, onSource, meta, focus,
 
       <div className="border-t border-line py-4">
         <label className="flex min-h-11 items-center gap-3">
-          <input type="checkbox" className="size-5" checked={showPoints} onChange={(e) => onShowPoints(e.target.checked)} />
-          <span>{t('showPoints')}</span>
+          <input type="checkbox" className="size-5" checked={showHexes} onChange={(e) => onShowHexes(e.target.checked)} />
+          <span>{t('showHexes')}</span>
         </label>
-        {showPoints && <p className="mt-1 text-sm text-muted">{caption}</p>}
+        {showHexes && <p className="mt-1 text-sm text-muted">{caption}</p>}
       </div>
     </details>
   );

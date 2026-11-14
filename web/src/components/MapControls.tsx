@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { REGIONS } from '../data/regions';
 import { useI18n } from '../i18n';
 import type { Bbox } from '../data/types';
+import type { Country } from '../lib/countries';
 import { IconClose, IconCoords, IconDraw } from './Icons';
 import { btnSolid, field, fieldLabel, select, tool, toolIcon, toolOn } from './ui';
 
 interface Props {
-  regionId: string; // preset id, 'custom' or 'none'
+  regionId: string; // preset id, 'custom', 'country' or 'none'
+  /** Country borders, loaded after the page; the list stays empty until then. */
+  countries: Country[];
+  countryId: string | null;
   bbox: Bbox | null;
   drawing: boolean;
   onRegion: (id: string) => void;
@@ -52,14 +56,26 @@ export default function MapControls(p: Props) {
   return (
     <div className="pointer-events-none absolute left-3 right-14 top-3 flex flex-col items-start gap-2">
       <div className="pointer-events-auto flex max-w-full flex-wrap gap-1.5 rounded-2xl bg-surface/95 p-1.5 shadow-float backdrop-blur">
-        <select id="region-select" className={`${select} max-w-full font-semibold`} aria-label={t('region')} value={p.regionId} onChange={(e) => p.onRegion(e.target.value)}>
+        <select id="region-select" className={`${select} max-w-full font-semibold`} aria-label={t('region')} value={p.regionId === 'country' ? `country:${p.countryId}` : p.regionId} onChange={(e) => p.onRegion(e.target.value)}>
           {p.regionId === 'none' && <option value="none">{t('chooseRegion')}</option>}
           {p.regionId === 'custom' && <option value="custom">{t('customArea')}</option>}
-          {REGIONS.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
-          ))}
+          {p.regionId === 'country' && !p.countries.some((c) => c.id === p.countryId) && <option value={`country:${p.countryId}`}>{t('loading')}</option>}
+          <optgroup label={t('regionsGroup')}>
+            {REGIONS.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </optgroup>
+          {p.countries.length > 0 && (
+            <optgroup label={t('countriesGroup')}>
+              {p.countries.map((c) => (
+                <option key={c.id} value={`country:${c.id}`}>
+                  {c.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
         <button type="button" className={p.drawing ? toolOn : tool} aria-pressed={p.drawing} onClick={p.onDrawToggle}>
           <IconDraw />
