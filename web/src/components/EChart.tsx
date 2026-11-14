@@ -49,8 +49,9 @@ export default function EChart({ option, height, onClick, ariaLabel }: Props) {
     ro.observe(el.current);
     return () => {
       ro.disconnect();
-      c.dispose();
       chart.current = null;
+      // A paint may already be queued for the next frame; disposing now would leave it with no canvas layers.
+      requestAnimationFrame(() => c.dispose());
     };
   }, []);
 

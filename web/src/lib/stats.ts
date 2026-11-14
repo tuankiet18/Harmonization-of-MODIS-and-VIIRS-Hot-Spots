@@ -26,6 +26,15 @@ export function anomalyPct(value: number | null, med: number | null): number | n
   return ((value - med) / med) * 100;
 }
 
+export type Verdict = 'higher' | 'typical' | 'lower' | 'unknown';
+
+/** Plain-language reading of an anomaly: within +/-10 % of the historical median counts as usual. */
+export function verdictOf(anomalyPct: number | null): Verdict {
+  if (anomalyPct === null) return 'unknown';
+  if (Math.abs(anomalyPct) < 10) return 'typical';
+  return anomalyPct > 0 ? 'higher' : 'lower';
+}
+
 export interface Kpis {
   currentMonth: string | null;
   currentValue: number | null;

@@ -29,7 +29,7 @@ export function validBbox(b: Bbox): boolean {
 
 /** Floating bar on the map: choose a region, draw one, or type its coordinates. */
 export default function MapControls(p: Props) {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Record<Field, string>>({ north: '', south: '', west: '', east: '' });
   const [invalid, setInvalid] = useState(false);
@@ -52,12 +52,12 @@ export default function MapControls(p: Props) {
   return (
     <div className="pointer-events-none absolute left-3 right-14 top-3 flex flex-col items-start gap-2">
       <div className="pointer-events-auto flex max-w-full flex-wrap gap-1.5 rounded-2xl bg-surface/95 p-1.5 shadow-float backdrop-blur">
-        <select className={`${select} max-w-full font-semibold`} aria-label={t('region')} value={p.regionId} onChange={(e) => p.onRegion(e.target.value)}>
+        <select id="region-select" className={`${select} max-w-full font-semibold`} aria-label={t('region')} value={p.regionId} onChange={(e) => p.onRegion(e.target.value)}>
           {p.regionId === 'none' && <option value="none">{t('chooseRegion')}</option>}
           {p.regionId === 'custom' && <option value="custom">{t('customArea')}</option>}
           {REGIONS.map((r) => (
             <option key={r.id} value={r.id}>
-              {r.name[lang]}
+              {r.name}
             </option>
           ))}
         </select>

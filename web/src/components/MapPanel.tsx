@@ -39,7 +39,7 @@ const toGeo = (pts: HotspotPoint[]): FeatureCollection => ({
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, points, onPickRegion }: Props) {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const ready = useRef(false);
@@ -107,6 +107,7 @@ export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, points, on
       const el = document.createElement('button');
       el.type = 'button';
       el.className = 'region-label';
+      el.textContent = r.name;
       el.addEventListener('click', () => onPickRef.current(r.id));
       new maplibregl.Marker({ element: el, anchor: 'center' })
         .setLngLat([(r.bbox.west + r.bbox.east) / 2, (r.bbox.south + r.bbox.north) / 2])
@@ -185,10 +186,6 @@ export default function MapPanel({ bbox, fitSignal, drawing, onDrawn, points, on
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    for (const l of labels.current) l.el.textContent = REGIONS.find((r) => r.id === l.id)!.name[lang];
-  }, [lang]);
 
   useEffect(() => {
     if (ready.current) syncArea();
