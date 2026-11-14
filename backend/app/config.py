@@ -22,6 +22,9 @@ class Settings:
     explain_rate_per_min: int = field(default_factory=lambda: int(os.getenv("EXPLAIN_RATE_PER_MIN", "10")))
     # Hard cap on points returned by /api/points so the map stays fast.
     max_points: int = field(default_factory=lambda: int(os.getenv("MAX_POINTS", "4000")))
+    # Where the monthly and daily series come from: 'sample' (the monthly/daily parquet tables, the default) or 'hex'
+    # (computed from the per-month hex files, which then must cover the months you want to show).
+    series_source: str = field(default_factory=lambda: os.getenv("SERIES_SOURCE", "sample"))
     # Hard cap on hexagons returned by /api/hexes.
     max_hexes: int = field(default_factory=lambda: int(os.getenv("MAX_HEXES", "8000")))
     # Hard cap on rows in a CSV export.

@@ -123,7 +123,7 @@ def test_cors_allows_only_configured_origin(client):
 def test_hexes_group_detections_into_h3_cells(client):
     import h3
 
-    j = client.get("/api/hexes", params={**BOX, "ym": "2026-09"}).json()
+    j = client.get("/api/hexes", params={**BOX, "from": "2026-09", "to": "2026-09"}).json()
     assert j["total"] > 0 and j["cells"]
     assert {"h3", "days"} <= set(j["cells"][0])
     for c in j["cells"]:
@@ -133,12 +133,26 @@ def test_hexes_group_detections_into_h3_cells(client):
 
 
 def test_hexes_for_one_day_are_single_day_cells(client):
-    cells = client.get("/api/hexes", params={**BOX, "ym": "2026-09", "day": 5}).json()["cells"]
+    cells = client.get("/api/hexes", params={**BOX, "from": "2026-09", "to": "2026-09", "day": 5}).json()["cells"]
     assert cells and all(c["days"] == 1 for c in cells)
 
 
 def test_hexes_respect_series_and_empty_months(client):
-    both = client.get("/api/hexes", params={**BOX, "ym": "2026-09"}).json()
-    modis = client.get("/api/hexes", params={**BOX, "ym": "2026-09", "source": "modis"}).json()
+    both = client.get("/api/hexes", params={**BOX, "from": "2026-09", "to": "2026-09"}).json()
+    modis = client.get("/api/hexes", params={**BOX, "from": "2026-09", "to": "2026-09", "source": "modis"}).json()
     assert 0 < modis["total"] <= both["total"]
-    assert client.get("/api/hexes", params={**BOX, "ym": "2010-01"}).json() == {"cells": [], "total": 0, "used": 0}
+    assert client.get("/api/hexes", params={**BOX, "from": "2010-01", "to": "2010-01"}).json() == {"cells": [], "total": 0, "used": 0}
+
+
+def test_hexes_over_a_period_add_up_the_days_of_every_month(client):
+    one = {c["h3"]: c["days"] for c in client.get("/api/hexes", params={**BOX, "from": "2026-09", "to": "2026-09"}).json()["cells"]}
+    both = {c["h3"]: c["days"] for c in client.get("/api/hexes", params={**BOX, "from": "2026-08", "to": "2026-09"}).json()["cells"]}
+    aug = {c["h3"]: c["days"] for c in client.get("/api/hexes", params={**BOX, "from": "2026-08", "to": "2026-08"}).json()["cells"]}
+    for h3 in set(one) | set(aug):
+        assert both[h3] == one.get(h3, 0) + aug.get(h3, 0)
+
+
+def test_hexes_reject_a_backwards_period_and_a_day_over_several_months(client):
+    assert client.get("/api/hexes", params={**BOX, "from": "2026-09", "to": "2026-08"}).status_code == 422
+    assert client.get("/api/hexes", params={**BOX, "from": "2026-08", "to": "2026-09", "day": 5}).status_code == 422
+    assert client.get("/api/hexes", params={**BOX, "ym": "2026-09"}).status_code == 422  # the old single-month form is gone

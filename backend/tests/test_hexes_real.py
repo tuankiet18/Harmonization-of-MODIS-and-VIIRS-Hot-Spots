@@ -32,7 +32,7 @@ def hex_client(tmp_path_factory):
 
 
 def test_cells_come_from_the_hex_files_with_days_counted(hex_client):
-    j = hex_client.get("/api/hexes", params={**BOX, "ym": "2001-03"}).json()
+    j = hex_client.get("/api/hexes", params={**BOX, "from": "2001-03", "to": "2001-03"}).json()
     cells = {c["h3"]: c["days"] for c in j["cells"]}
     # Before 2013 the harmonized series is MODIS only, so the VIIRS cell is not drawn and Egypt is outside the box.
     assert cells == {"87aaaaaaaffffff": 2, "87bbbbbbbffffff": 1}
@@ -40,29 +40,40 @@ def test_cells_come_from_the_hex_files_with_days_counted(hex_client):
 
 
 def test_from_2013_the_harmonized_series_is_viirs(hex_client):
-    j = hex_client.get("/api/hexes", params={**BOX, "ym": "2015-03"}).json()
+    j = hex_client.get("/api/hexes", params={**BOX, "from": "2015-03", "to": "2015-03"}).json()
     assert {c["h3"] for c in j["cells"]} == {"87aaaaaaaffffff"} and j["total"] == 1
 
 
 def test_a_series_can_be_picked_explicitly(hex_client):
-    j = hex_client.get("/api/hexes", params={**BOX, "ym": "2001-03", "source": "viirs"}).json()
+    j = hex_client.get("/api/hexes", params={**BOX, "from": "2001-03", "to": "2001-03", "source": "viirs"}).json()
     assert [c["h3"] for c in j["cells"]] == ["87eeeeeeaffffff"]
 
 
 def test_one_day_gives_single_day_cells(hex_client):
-    j = hex_client.get("/api/hexes", params={**BOX, "ym": "2001-03", "day": 5}).json()
+    j = hex_client.get("/api/hexes", params={**BOX, "from": "2001-03", "to": "2001-03", "day": 5}).json()
     assert {c["h3"]: c["days"] for c in j["cells"]} == {"87aaaaaaaffffff": 1, "87bbbbbbbffffff": 1}
     assert j["total"] == j["used"] == 2
-    assert hex_client.get("/api/hexes", params={**BOX, "ym": "2001-03", "day": 2}).json()["cells"] == []
+    assert hex_client.get("/api/hexes", params={**BOX, "from": "2001-03", "to": "2001-03", "day": 2}).json()["cells"] == []
 
 
 def test_box_filters_on_cell_centres_and_missing_months_are_empty(hex_client):
     far = {"west": 39, "south": 29, "east": 41, "north": 31}
-    assert [c["h3"] for c in hex_client.get("/api/hexes", params={**far, "ym": "2001-03"}).json()["cells"]] == ["87ddddddaffffff"]
-    assert hex_client.get("/api/hexes", params={**BOX, "ym": "2010-06"}).json() == {"cells": [], "total": 0, "used": 0}
+    assert [c["h3"] for c in hex_client.get("/api/hexes", params={**far, "from": "2001-03", "to": "2001-03"}).json()["cells"]] == ["87ddddddaffffff"]
+    assert hex_client.get("/api/hexes", params={**BOX, "from": "2010-06", "to": "2010-06"}).json() == {"cells": [], "total": 0, "used": 0}
 
 
 def test_the_cap_cuts_the_quietest_cells_and_says_so(hex_client):
-    j = hex_client.get("/api/hexes", params={**BOX, "ym": "2001-03", "limit": 1}).json()
+    j = hex_client.get("/api/hexes", params={**BOX, "from": "2001-03", "to": "2001-03", "limit": 1}).json()
     assert [c["h3"] for c in j["cells"]] == ["87aaaaaaaffffff"]  # the cell with the most days
     assert j["total"] == 2 and j["used"] == 1
+
+
+def test_a_period_switches_sensor_month_by_month_and_adds_the_days(hex_client):
+    # 2001-03 is MODIS (cell A on 2 days, cell B on 1), 2015-03 is VIIRS (cell A on 1 day; the MODIS row of B is not used).
+    j = hex_client.get("/api/hexes", params={**BOX, "from": "2001-03", "to": "2015-03"}).json()
+    assert {c["h3"]: c["days"] for c in j["cells"]} == {"87aaaaaaaffffff": 3, "87bbbbbbbffffff": 1}
+    assert j["total"] == j["used"] == 2
+
+
+def test_a_period_with_no_files_inside_it_is_empty(hex_client):
+    assert hex_client.get("/api/hexes", params={**BOX, "from": "2005-01", "to": "2010-12"}).json() == {"cells": [], "total": 0, "used": 0}

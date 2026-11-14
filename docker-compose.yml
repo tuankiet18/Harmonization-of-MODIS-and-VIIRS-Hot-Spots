@@ -10,6 +10,8 @@ services:
     environment:
       DATA_DIR: /srv/data/sample
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      # 'sample' keeps the monthly and daily series on the synthetic tables; 'hex' computes them from the hex files.
+      SERIES_SOURCE: ${SERIES_SOURCE:-sample}
       EXPLAIN_PROVIDER: ${EXPLAIN_PROVIDER:-template}
       EXPLAIN_RATE_PER_MIN: ${EXPLAIN_RATE_PER_MIN:-10}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

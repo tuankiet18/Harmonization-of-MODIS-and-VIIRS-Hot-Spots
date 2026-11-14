@@ -27,6 +27,7 @@ Put these in a `.env` next to `docker-compose.yml` (git ignores it). All are opt
 | Variable | Default | Meaning |
 |---|---|---|
 | `WEB_PORT` | `80` | Host port for the site |
+| `SERIES_SOURCE` | `sample` | `hex` để chuỗi tháng, ngày và CSV tính từ file lục giác (cần file đã gom đủ các tháng muốn hiển thị) |
 | `EXPLAIN_PROVIDER` | `template` | `llm` needs the AI teammates' `LlmExplainer` (see `backend/README.md`); until then it returns 501 |
 | `ANTHROPIC_API_KEY` | empty | Passed to the api container only, never to the browser |
 | `EXPLAIN_RATE_PER_MIN` | `10` | Per-visitor limit on `/api/explain` |

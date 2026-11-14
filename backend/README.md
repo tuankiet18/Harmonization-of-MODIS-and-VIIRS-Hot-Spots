@@ -28,7 +28,7 @@ All box parameters are `west, south, east, north` in degrees (`south < north`, `
 | `GET /api/monthly?box` | One row per month: `modis, viirs, harmonized, cells, anyNrt, allInCalibration, methods, scaleFactor`. About 60 KB for any area. |
 | `GET /api/daily?box&ym` | One row per day of that month. Days add up to the month. |
 | `GET /api/points?box&ym[&source][&day][&limit]` | `{points: [{lat, lon, sensor}], total}`. A stable sample of at most `MAX_POINTS`, plus the true total. |
-| `GET /api/hexes?box&ym[&source][&day][&limit]` | `{cells: [{h3, days}], total, used}`. H3 res7 hexagons with fire (what the map draws); `days` = days of the month with a detection, `total` = cells with fire, `used` = cells returned (the cap is `MAX_HEXES`). |
+| `GET /api/hexes?box&from&to[&source][&day][&limit]` | `{cells: [{h3, days}], total, used}`. H3 res7 hexagons with fire over the period `from`..`to` (`YYYY-MM`), what the map draws; `days` = days with a detection summed over its months (a `day` needs `from` = `to`), `total` = cells with fire, `used` = cells returned (the cap is `MAX_HEXES`). |
 | `GET /api/export.csv?box&start&end[&level=monthly\|daily][&series]` | CSV with a provenance header (method, version, source, area, period). |
 | `POST /api/explain` | `{text, provider, facts}` for one month. Rate limited per client. |
 
@@ -61,7 +61,7 @@ Set `isMock: false` in `meta.json` to remove the demo banner in the web app.
 python scripts/build_hex_months.py --src "D:/data/parquet_h3_world/**/*.parquet" --out data/sample/hex
 ```
 
-Restart the API afterwards. The input is about 7 GB, so run it where the data lives (for example Colab with Drive mounted) and copy the output over.
+Restart the API afterwards. The script reads the data team's updated schema (`type`, `conf_l`/`conf_n`/`conf_h`) and the older one; it drops static sources (`type` other than 0) and low-confidence points, and keeps the hottest brightness temperature (`temp_max`) and summed FRP (`frp_sum`) of each cell and month. Set `SERIES_SOURCE=hex` to also draw the charts from these files, once they cover the months you want to show. The input is about 7 GB, so run it where the data lives (for example Colab with Drive mounted) and copy the output over.
 On one small file the output was about 40% of the input size; a denser VIIRS year has not been measured.
 
 ## Settings (environment variables)
@@ -69,6 +69,7 @@ On one small file the output was about 40% of the input size; a denser VIIRS yea
 | Variable | Default | Meaning |
 |---|---|---|
 | `DATA_DIR` | `data/sample` | Folder with the files above |
+| `SERIES_SOURCE` | `sample` | `sample` keeps `/api/monthly`, `/api/daily` and the CSV on the synthetic tables. `hex` computes them from the hex files (cell-days per sensor; before 2013 MODIS times a per-month factor fitted where both sensors have data in 2013-2022; from 2013 VIIRS). The API refuses to start with `hex` and no hex files |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated origins allowed from a browser. Add the Netlify URL when deployed |
 | `EXPLAIN_PROVIDER` | `template` | `template` needs no key. `llm` is the hook for the AI teammates |
 | `EXPLAIN_RATE_PER_MIN` | `10` | Per-client limit for `/api/explain` |

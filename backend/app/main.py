@@ -55,7 +55,7 @@ class RateLimiter:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    store = Store(settings.data_dir)
+    store = Store(settings.data_dir, series_from_hex=settings.series_source == "hex")
     explainer = get_explainer(settings.explain_provider)
     limiter = RateLimiter(settings.explain_rate_per_min)
 
@@ -102,14 +102,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/hexes", response_model=HexSample, response_model_by_alias=True)
     def hexes(
         box: Annotated[Bbox, Depends(bbox_params)],
-        ym: Annotated[str, Query(pattern=YM)],
+        start: Annotated[str, Query(alias="from", pattern=YM)],
+        end: Annotated[str, Query(alias="to", pattern=YM)],
         source: Source = "harmonized",
         day: Annotated[int | None, Query(ge=1, le=31)] = None,
         limit: Annotated[int, Query(ge=1)] = 8000,
     ):
-        """Fire map as H3 res7 hexagons: how many days of the month each ~5 km2 cell had a detection (1 for a single day)."""
+        """Fire map as H3 res7 hexagons for a period: the days (summed over the months) each ~5 km2 cell had a detection."""
+        if start > end:
+            raise HTTPException(422, "from must not be after to.")
+        if day is not None and start != end:
+            raise HTTPException(422, "A single day needs from and to to be the same month.")
         sensors = ["modis", "viirs"] if source == "harmonized" else [source]
-        return store.hexes(box, ym, sensors, day, min(limit, settings.max_hexes))
+        return store.hexes(box, start, end, sensors, day, min(limit, settings.max_hexes))
 
     @app.get("/api/export.csv")
     def export_csv(
