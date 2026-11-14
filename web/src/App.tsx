@@ -12,9 +12,9 @@ import Toolbar from './components/Toolbar';
 import { btn } from './components/ui';
 import { dataSource } from './data';
 import { REGIONS } from './data/regions';
-import type { Bbox, DataMeta, DateRange, DayPoint, HotspotSample, MonthRecord, Source } from './data/types';
+import type { Bbox, DataMeta, DateRange, DayPoint, HotspotSample, MonthlyPoint, Source } from './data/types';
 import { useI18n } from './i18n';
-import { aggregateMonthly, valueOf } from './lib/aggregate';
+import { valueOf } from './lib/aggregate';
 import { buildCsv, downloadText } from './lib/csv';
 import { computeKpis } from './lib/stats';
 import { decodeState, encodeState } from './lib/urlState';
@@ -37,7 +37,7 @@ export default function App() {
   const [drawing, setDrawing] = useState(false);
   const [range, setRange] = useState<DateRange>({ start: '2000-11', end: '2026-10' });
   const [limits, setLimits] = useState({ min: '2000-11', max: '2026-10' });
-  const [records, setRecords] = useState<MonthRecord[]>([]);
+  const [all, setAll] = useState<MonthlyPoint[]>([]);
   const [synced, setSynced] = useState(false);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -67,7 +67,7 @@ export default function App() {
 
   useEffect(() => {
     if (!bbox) {
-      setRecords([]);
+      setAll([]);
       setLoading(false);
       return;
     }
@@ -75,15 +75,14 @@ export default function App() {
     setLoading(true);
     setFailed(false);
     dataSource
-      .query(bbox)
-      .then((r) => !cancelled && (setRecords(r), setLoading(false)))
+      .monthly(bbox)
+      .then((r) => !cancelled && (setAll(r), setLoading(false)))
       .catch(() => !cancelled && (setFailed(true), setLoading(false)));
     return () => {
       cancelled = true;
     };
   }, [bbox]);
 
-  const all = useMemo(() => aggregateMonthly(records), [records]);
   const inRange = useMemo(() => all.filter((p) => p.yearMonth >= range.start && p.yearMonth <= range.end), [all, range]);
   const kRange = useMemo(() => computeKpis(inRange, source), [inRange, source]);
   const hasData = !loading && inRange.length > 0 && kRange.total > 0;

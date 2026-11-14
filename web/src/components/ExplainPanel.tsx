@@ -30,6 +30,9 @@ function Badge({ ok, children }: { ok: boolean; children: ReactNode }) {
   return <span className={`whitespace-nowrap rounded-full border px-2.5 text-sm font-medium ${ok ? 'border-ok text-ok' : 'border-warn bg-warn-wash text-warn'}`}>{children}</span>;
 }
 
+/** Aqua joined Terra in July 2002; before that MODIS counts come from Terra alone. */
+const TERRA_ONLY_END = '2002-06';
+
 /** How the month in focus got its harmonized number: raw counts, conversion, quality flags. */
 export default function ExplainPanel({ point, source, meta }: Props) {
   const { t, fmt, fmtMonth } = useI18n();
@@ -39,14 +42,12 @@ export default function ExplainPanel({ point, source, meta }: Props) {
   const conversion =
     point.methods.length > 1
       ? t('convMixed', { list: point.methods.join(', ') })
-      : method === 'modis_only'
-        ? t('convModisOnly')
-        : method === 'viirs_scaled'
-          ? t('convViirsScaled', { f })
-          : t('convBlend', { f });
+      : method === 'modis_scaled'
+        ? t('convModisScaled', { f })
+        : t('convViirsNative');
   const limits: string[] = [];
-  if (point.methods.includes('modis_only')) limits.push(t('limModisOnly'));
-  if (point.methods.includes('viirs_scaled') && !point.allInCalibration) limits.push(t('limOutCalib'));
+  if (point.methods.includes('modis_scaled')) limits.push(t('limModisScaled'));
+  if (point.yearMonth <= TERRA_ONLY_END) limits.push(t('limTerraOnly'));
   if (point.anyNrt) limits.push(t('limNrt'));
   const num = (v: number | null) => (v === null ? t('notObserved') : fmt(v));
 
@@ -69,7 +70,7 @@ export default function ExplainPanel({ point, source, meta }: Props) {
         <Row label={t('limitationsTitle')}>
           {limits.length ? limits.join(' ') : t('limNone')}
           <span className="mt-2 flex flex-wrap gap-1.5">
-            <Badge ok={point.allInCalibration}>{point.allInCalibration ? t('badgeInCalib') : t('badgeOutCalib')}</Badge>
+            <Badge ok={!point.methods.includes('modis_scaled')}>{point.methods.includes('modis_scaled') ? t('badgeConverted') : t('badgeReference')}</Badge>
             <Badge ok={!point.anyNrt}>{point.anyNrt ? t('badgeNrt') : t('badgeStandard')}</Badge>
           </span>
         </Row>

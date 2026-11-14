@@ -1,5 +1,6 @@
 export type Source = 'harmonized' | 'modis' | 'viirs';
-export type HarmonizeMethod = 'modis_only' | 'viirs_scaled' | 'blend';
+/** modis_scaled: MODIS count x a monthly factor, onto the VIIRS scale (before 2013). viirs_native: S-NPP VIIRS as is (from 2013). */
+export type HarmonizeMethod = 'modis_scaled' | 'viirs_native';
 export type DataStatus = 'standard' | 'nrt';
 
 /** One grid cell × one month. This is the data contract (see docs/DATA_CONTRACT.md). */
@@ -8,12 +9,12 @@ export interface MonthRecord {
   lat: number; // cell centre
   lon: number;
   yearMonth: string; // 'YYYY-MM'
-  modisRaw: number | null; // null = sensor not operating / no coverage
-  viirsRaw: number | null;
+  modisRaw: number | null; // active cell-days seen by MODIS (null = sensor not operating / no coverage)
+  viirsRaw: number | null; // active cell-days seen by S-NPP VIIRS, the reference series
   harmonized: number | null;
   method: HarmonizeMethod;
-  scaleFactor: number | null; // VIIRS -> MODIS-equivalent factor applied
-  inCalibration: boolean; // month lies inside the MODIS/VIIRS overlap used for calibration
+  scaleFactor: number | null; // MODIS -> VIIRS factor for this calendar month; null when VIIRS is used as is
+  inCalibration: boolean; // month lies inside the 2013-2022 overlap used to fit the factors
   dataStatus: DataStatus;
 }
 
@@ -58,8 +59,8 @@ export interface DayPoint {
 
 export interface DataSource {
   meta(): Promise<DataMeta>;
-  /** All months for cells whose centre lies inside bbox. */
-  query(bbox: Bbox): Promise<MonthRecord[]>;
+  /** One point per month, summed over the cells whose centre lies inside bbox. */
+  monthly(bbox: Bbox): Promise<MonthlyPoint[]>;
   /** Raw detections inside bbox for one month, or for one day of it. 'harmonized' returns both sensors. */
   points(bbox: Bbox, yearMonth: string, source: Source, day?: number): Promise<HotspotSample>;
   /** Day-by-day totals for one month inside bbox. Days add up to the monthly totals. */

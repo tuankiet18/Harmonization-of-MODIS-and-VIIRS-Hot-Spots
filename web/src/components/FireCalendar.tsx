@@ -24,11 +24,11 @@ const FONT = 'Barlow, system-ui, sans-serif';
 export default function FireCalendar({ inRange, all, source, mode, focus, onSelect }: Props) {
   const { t, months, fmt, fmtPct, fmtMonth } = useI18n();
 
-  const { option, height, max, modisOnly } = useMemo(() => {
+  const { option, height, max, modisScaled } = useMemo(() => {
     const years = [...new Set(inRange.map((p) => p.year))].sort((a, b) => a - b);
     const yIndex = new Map(years.map((y, i) => [y, i]));
-    const modisOnlyYears = new Set(
-      years.filter((y) => inRange.filter((p) => p.year === y).every((p) => p.methods.every((m) => m === 'modis_only'))),
+    const modisScaledYears = new Set(
+      years.filter((y) => inRange.filter((p) => p.year === y).every((p) => p.methods.every((m) => m === 'modis_scaled'))),
     );
 
     const counts = inRange.map((p) => valueOf(p, source)).filter((v): v is number => v !== null);
@@ -97,7 +97,7 @@ export default function FireCalendar({ inRange, all, source, mode, focus, onSele
         axisLabel: {
           interval: 0,
           // MODIS-only years are set in grey italics; the legend below says why.
-          formatter: (val: string) => (modisOnlyYears.has(Number(val)) ? `{old|${val}}` : `{y|${val}}`),
+          formatter: (val: string) => (modisScaledYears.has(Number(val)) ? `{old|${val}}` : `{y|${val}}`),
           rich: {
             y: { color: COLORS.ink, fontSize: 13, fontFamily: FONT },
             old: { color: COLORS.muted, fontSize: 13, fontFamily: FONT, fontStyle: 'italic' },
@@ -114,8 +114,8 @@ export default function FireCalendar({ inRange, all, source, mode, focus, onSele
         },
       ],
     };
-    const old = [...modisOnlyYears].sort((a, b) => a - b);
-    return { option: opt, height: Math.max(160, years.length * ROW_H + 34), max: p98, modisOnly: old.length ? ([old[0], old[old.length - 1]] as const) : null };
+    const old = [...modisScaledYears].sort((a, b) => a - b);
+    return { option: opt, height: Math.max(160, years.length * ROW_H + 34), max: p98, modisScaled: old.length ? ([old[0], old[old.length - 1]] as const) : null };
   }, [inRange, all, source, mode, focus, t, months, fmt, fmtPct, fmtMonth]);
 
   return (
@@ -162,10 +162,10 @@ export default function FireCalendar({ inRange, all, source, mode, focus, onSele
             <i className="size-3.5 rounded-sm border border-line bg-surface" />
             {t('legendNoData')}
           </li>
-          {modisOnly && (
+          {modisScaled && (
             <li className="flex items-center gap-1.5">
-              <i className="italic">{modisOnly[0]}</i>
-              {t('modisOnlyYears', { from: modisOnly[0], to: modisOnly[1] })}
+              <i className="italic">{modisScaled[0]}</i>
+              {t('modisScaledYears', { from: modisScaled[0], to: modisScaled[1] })}
             </li>
           )}
         </ul>

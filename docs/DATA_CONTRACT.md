@@ -11,12 +11,12 @@ Giao diện chỉ phụ thuộc interface `DataSource` (`web/src/data/types.ts`)
 | `cell_id` | string | Mã ô lưới, ổn định giữa các tháng (vd `-10.25_-60.75`) |
 | `lat`, `lon` | number | Tâm ô lưới (độ thập phân) |
 | `year_month` | `YYYY-MM` | Tháng |
-| `modis_raw` | int \| null | Số hotspot MODIS gốc (null nếu không có) |
-| `viirs_raw` | int \| null | Số hotspot VIIRS gốc (null trước 2012) |
-| `harmonized` | number \| null | Giá trị đã hiệu chỉnh (chuỗi thống nhất) |
-| `method` | `modis_only` \| `viirs_scaled` \| `blend` | Cách tạo `harmonized` |
-| `scale_factor` | number \| null | Hệ số quy đổi VIIRS→MODIS đã dùng |
-| `in_calibration` | bool | Tháng nằm trong giai đoạn chồng lấn dùng để hiệu chỉnh |
+| `modis_raw` | int \| null | Số **ô-ngày có cháy** (DAG) của MODIS, Terra + Aqua gộp theo ô-ngày (null nếu không có) |
+| `viirs_raw` | int \| null | Số ô-ngày có cháy của **S-NPP VIIRS** (chuỗi chuẩn; null trước 2012-01) |
+| `harmonized` | number \| null | Chuỗi thống nhất trên **thang VIIRS (S-NPP)**: trước 2013 = `modis_raw` × `scale_factor`; từ 2013 = `viirs_raw` |
+| `method` | `modis_scaled` \| `viirs_native` | Cách tạo `harmonized`: MODIS nhân hệ số (trước 2013) hoặc VIIRS giữ nguyên (từ 2013) |
+| `scale_factor` | number \| null | Hệ số **MODIS→VIIRS** (VIIRS/MODIS) của tháng dương lịch đó, fit trên 2013–2022; null khi `method = viirs_native` |
+| `in_calibration` | bool | Tháng nằm trong giai đoạn 2013–2022 dùng để fit hệ số |
 | `data_status` | `standard` \| `nrt` | Dữ liệu chuẩn hay sơ bộ (near-real-time) |
 
 ## `metadata.json`
@@ -25,7 +25,7 @@ Giao diện chỉ phụ thuộc interface `DataSource` (`web/src/data/types.ts`)
 {
   "version": "1.0.0",
   "method": "Mô tả ngắn phương pháp hiệu chỉnh (hiển thị trong panel và đóng vào CSV)",
-  "source": "NASA FIRMS MODIS C6.1 + VIIRS S-NPP/NOAA-20 375m",
+  "source": "NASA FIRMS MODIS C6.1 + VIIRS S-NPP 375m",
   "gridDeg": 0.25,
   "updated": "2026-11-14",
   "firstMonth": "2000-11",
@@ -38,7 +38,14 @@ Giao diện chỉ phụ thuộc interface `DataSource` (`web/src/data/types.ts`)
 - Phủ toàn cầu hoặc các vùng cần demo; tên cột đúng như trên.
 - Kích thước: nên gọn (vài chục MB) để tải thẳng về trình duyệt; nếu quá lớn, chia file theo vùng/tile.
 - `isMock: false` để banner "DEMO DATA" biến mất.
-- Hiện tại `MockDataSource` sinh số liệu giả theo đúng schema này (có mùa cháy, năm bất thường, tỷ lệ VIIRS ≈ 3.3× MODIS).
+- Hiện tại `MockDataSource` sinh số liệu giả theo đúng schema này (có mùa cháy, năm bất thường, tỷ lệ VIIRS ≈ 3.3× MODIS, hiệu chỉnh đúng quy ước bên dưới).
+
+## Quy ước hiệu chỉnh (theo team data)
+
+- **Đơn vị: ô-ngày có cháy (DAG).** Mỗi ô H3 res7 (~5 km²) có ít nhất một điểm phát hiện trong một ngày tính là 1. Web hiển thị là "active cell-days"; CSV có dòng `# unit` ghi rõ.
+- **Chuẩn là S-NPP VIIRS.** MODIS được nâng lên thang VIIRS bằng hệ số theo từng tháng dương lịch (fit trên 2013–2022). Từ 2013 dùng VIIRS gốc.
+- **Chưa có NOAA-20 và NOAA-21 trong chuỗi.** S-NPP ngừng từ 2026-11-02, cần cầu nối S-NPP → NOAA-20 → NOAA-21 khi mở rộng sang 2026.
+- **Giai đoạn 2000-11 đến 2002-06 chỉ có Terra**, thấy ít hơn nhiều so với Terra + Aqua; web ghi chú rõ nhưng chưa bù.
 
 ## Điểm cháy trên bản đồ (tùy chọn nhưng nên có)
 

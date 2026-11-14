@@ -1,5 +1,6 @@
+import { aggregateMonthly } from '../lib/aggregate';
 import { REGIONS } from './regions';
-import type { Bbox, DataMeta, DataSource, DayPoint, HotspotPoint, HotspotSample, MonthRecord, Source } from './types';
+import type { Bbox, DataMeta, DataSource, DayPoint, HotspotPoint, HotspotSample, MonthRecord, MonthlyPoint, Source } from './types';
 
 /**
  * Synthetic data with the same shape as the real harmonized dataset.
@@ -10,7 +11,8 @@ import type { Bbox, DataMeta, DataSource, DayPoint, HotspotPoint, HotspotSample,
 const FIRST = '2000-11';
 const LAST = '2026-10';
 const VIIRS_START = '2012-01';
-const CALIB_END = '2023-12';
+const CALIB_START = '2013-01'; // factors are fitted on 2013-2022 and VIIRS is used as is from 2013
+const CALIB_END = '2022-12';
 const NRT_START = '2026-08';
 const VIIRS_TO_MODIS_RATIO = 3.3; // VIIRS (375 m) detects ~3x more hotspots than MODIS (1 km)
 
@@ -93,32 +95,23 @@ function generateCell(lat: number, lon: number): MonthRecord[] {
     return { ym, modis, viirs };
   });
 
-  // Per-cell VIIRS -> MODIS factor from the calibration overlap.
-  let sm = 0;
-  let sv = 0;
+  // MODIS -> VIIRS factor per calendar month, fitted on the calibration window (as in the data team's notebook).
+  const fit = Array.from({ length: 12 }, () => ({ modis: 0, viirs: 0 }));
   for (const r of rows) {
-    if (r.viirs !== null && r.ym <= CALIB_END) {
-      sm += r.modis;
-      sv += r.viirs;
+    if (r.viirs !== null && r.ym >= CALIB_START && r.ym <= CALIB_END) {
+      const f = fit[Number(r.ym.slice(5)) - 1];
+      f.modis += r.modis;
+      f.viirs += r.viirs;
     }
   }
-  const scale = sv > 0 ? sm / sv : 1 / VIIRS_TO_MODIS_RATIO;
+  const factor = (month: number) => (fit[month - 1].modis > 0 && fit[month - 1].viirs > 0 ? fit[month - 1].viirs / fit[month - 1].modis : VIIRS_TO_MODIS_RATIO);
 
   return rows.map(({ ym, modis, viirs }) => {
-    let harmonized: number;
-    let method: MonthRecord['method'];
-    let inCalibration = false;
-    if (viirs === null) {
-      harmonized = modis;
-      method = 'modis_only';
-    } else if (ym <= CALIB_END) {
-      harmonized = (modis + viirs * scale) / 2;
-      method = 'blend';
-      inCalibration = true;
-    } else {
-      harmonized = viirs * scale;
-      method = 'viirs_scaled';
-    }
+    const scaled = ym < CALIB_START;
+    const f = factor(Number(ym.slice(5)));
+    const harmonized = scaled ? modis * f : (viirs as number);
+    const method: MonthRecord['method'] = scaled ? 'modis_scaled' : 'viirs_native';
+    const inCalibration = ym >= CALIB_START && ym <= CALIB_END;
     return {
       cellId,
       lat,
@@ -128,7 +121,7 @@ function generateCell(lat: number, lon: number): MonthRecord[] {
       viirsRaw: viirs,
       harmonized: Math.round(harmonized * 10) / 10,
       method,
-      scaleFactor: viirs === null ? null : Math.round(scale * 1000) / 1000,
+      scaleFactor: scaled ? Math.round(f * 1000) / 1000 : null,
       inCalibration,
       dataStatus: ym >= NRT_START ? 'nrt' : 'standard',
     };
@@ -140,7 +133,7 @@ export class MockDataSource implements DataSource {
     return {
       version: 'mock-0.1',
       method:
-        'DEMO: per-cell VIIRS→MODIS ratio from 2012–2023 overlap; blend in overlap, scaled VIIRS afterwards, MODIS only before 2012',
+        'DEMO: before 2013 MODIS is multiplied by a per-month factor onto the VIIRS (S-NPP) scale, fitted on 2013–2022; from 2013 VIIRS is used as is',
       source: 'Synthetic demo data (not NASA FIRMS)',
       gridDeg: 1,
       updated: '2026-11-13',
@@ -168,6 +161,10 @@ export class MockDataSource implements DataSource {
     this.cacheKey = key;
     this.cache = out;
     return out;
+  }
+
+  async monthly(bbox: Bbox): Promise<MonthlyPoint[]> {
+    return aggregateMonthly(await this.query(bbox));
   }
 
   async query(bbox: Bbox): Promise<MonthRecord[]> {

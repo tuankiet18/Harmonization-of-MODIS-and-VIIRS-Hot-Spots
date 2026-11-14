@@ -8,7 +8,7 @@ import type { MonthRecord, MonthlyPoint } from '../src/data/types';
 
 const rec = (cellId: string, yearMonth: string, h: number, extra: Partial<MonthRecord> = {}): MonthRecord => ({
   cellId, lat: 0, lon: 0, yearMonth, modisRaw: h, viirsRaw: null, harmonized: h,
-  method: 'modis_only', scaleFactor: null, inCalibration: false, dataStatus: 'standard', ...extra,
+  method: 'modis_scaled', scaleFactor: null, inCalibration: false, dataStatus: 'standard', ...extra,
 });
 
 describe('median / anomaly', () => {
@@ -70,7 +70,7 @@ describe('csv', () => {
     );
     expect(csv).toContain('# dataset_version: v1');
     expect(csv).toContain('year_month,modis_raw');
-    expect(csv).toContain('2020-01,5,,5,modis_only');
+    expect(csv).toContain('2020-01,5,,5,modis_scaled');
   });
 });
 

@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+# generated sample data (python scripts/make_sample_data.py); real data never goes in git
+data/

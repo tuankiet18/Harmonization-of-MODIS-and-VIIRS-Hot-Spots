@@ -5,7 +5,8 @@ const f = (v: number | null) => (v === null ? '' : String(Math.round(v * 10) / 1
 /** Monthly-aggregate CSV with a commented provenance header (method, version, source). */
 export function buildCsv(points: MonthlyPoint[], meta: DataMeta, bbox: Bbox, range: DateRange, source: Source): string {
   const head = [
-    '# FireCalendar export - monthly hotspot counts',
+    '# FireCalendar export - monthly fire activity',
+    '# unit: active cell-days (a cell-day is one ~5 km2 H3 cell with at least one fire detection on one day)',
     `# source: ${meta.source}`,
     `# dataset_version: ${meta.version}${meta.isMock ? ' (DEMO DATA - not real observations)' : ''}`,
     `# harmonization_method: ${meta.method}`,
