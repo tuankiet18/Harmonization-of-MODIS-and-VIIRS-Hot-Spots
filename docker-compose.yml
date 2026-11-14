@@ -1,0 +1,41 @@
+# FireCalendar: web (nginx) + api (FastAPI, includes the /api/explain AI hook).
+#   docker compose build
+#   docker compose run --rm api python scripts/make_sample_data.py --out /srv/data/sample   # first run only, SYNTHETIC data
+#   docker compose up -d
+# Secrets (e.g. ANTHROPIC_API_KEY) go in a .env next to this file, which git ignores.
+services:
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /srv/data/sample
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      EXPLAIN_PROVIDER: ${EXPLAIN_PROVIDER:-template}
+      EXPLAIN_RATE_PER_MIN: ${EXPLAIN_RATE_PER_MIN:-10}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    # Behind nginx every request comes from nginx; trust its forwarded address so the rate limit is per visitor.
+    # Safe because the api port is not published, only nginx can reach it.
+    command: ["sh", "-c", "uvicorn app.asgi:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
+    volumes:
+      - fire-data:/srv/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    build:
+      context: ./web
+      args:
+        VITE_DATA_SOURCE: ${VITE_DATA_SOURCE:-api}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-80}:80"
+
+volumes:
+  fire-data:
