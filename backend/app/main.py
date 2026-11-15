@@ -60,6 +60,12 @@ class RateLimiter:
         q.append(now)
 
 
+def short_cache(response: Response, empty: bool) -> None:
+    """An empty answer is cached for a minute, not days: it may only mean the data for that period had not been loaded yet."""
+    if empty:
+        response.headers["X-Accel-Expires"] = "60"
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     store = Store(settings.data_dir, series_from_hex=settings.series_source == "hex", raw_dir=settings.raw_dir)
@@ -84,14 +90,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return store.meta()
 
     @app.get("/api/monthly", response_model=list[MonthlyPoint], response_model_by_alias=True)
-    def monthly(box: Annotated[Bbox, Depends(bbox_params)], country: Country = None):
+    def monthly(box: Annotated[Bbox, Depends(bbox_params)], response: Response, country: Country = None):
         """Per-month totals for the box, or for a country by its borders (what the calendar and trend chart need)."""
-        return store.monthly(box, country)
+        out = store.monthly(box, country)
+        short_cache(response, not out)
+        return out
 
     @app.get("/api/daily", response_model=list[DayPoint], response_model_by_alias=True)
-    def daily(box: Annotated[Bbox, Depends(bbox_params)], ym: Annotated[str, Query(pattern=YM)], country: Country = None):
+    def daily(box: Annotated[Bbox, Depends(bbox_params)], ym: Annotated[str, Query(pattern=YM)], response: Response, country: Country = None):
         """Per-day totals for one month. Days add up to the month's totals."""
-        return store.daily(box, ym, country)
+        out = store.daily(box, ym, country)
+        short_cache(response, not out)
+        return out
 
     @app.get("/api/points", response_model=HotspotSample, response_model_by_alias=True)
     def points(
@@ -119,6 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: Annotated[int, Query(ge=1)] = 150000,
         res: Annotated[int, Query(ge=3, le=7)] = 7,
         country: Country = None,
+        response: Response = None,  # type: ignore[assignment]
     ):
         """Fire map as H3 hexagons for a period: the days (summed over the months) with a detection, added up over the res7 cells
         (~5 km2) inside each hexagon of resolution `res` (3 coarsest .. 7 the data's own cells)."""
@@ -127,7 +138,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if day is not None and start != end:
             raise HTTPException(422, "A single day needs from and to to be the same month.")
         sensors = ["modis", "viirs"] if source == "harmonized" else [source]
-        return store.hexes(box, start, end, sensors, day, min(limit, settings.max_hexes), res, country)
+        out = store.hexes(box, start, end, sensors, day, min(limit, settings.max_hexes), res, country)
+        short_cache(response, not out["total"])
+        return out
 
     @app.get("/api/temps", response_model=TempSample, response_model_by_alias=True)
     def temps(
@@ -136,6 +149,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         month: Annotated[str | None, Query(pattern=YM)] = None,
         source: Source = "harmonized",
         limit: Annotated[int, Query(ge=1)] = 60000,
+        response: Response = None,  # type: ignore[assignment]
     ):
         """The hottest mid-infrared brightness temperature (bright_mir, Celsius) per res7 cell on one day (`day`, YYYY-MM-DD) or
         over one month (`month`, YYYY-MM): the map's temperature view. Needs RAW_DIR; 404 without it."""
@@ -154,9 +168,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             start, end = f"{y}-{m:02d}-01", f"{y}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
         sensors = ["modis", "viirs"] if source == "harmonized" else [source]
         try:
-            return store.temps(box, start, end, sensors, min(limit, settings.max_hexes))
+            out = store.temps(box, start, end, sensors, min(limit, settings.max_hexes))
         except DataError as e:
             raise HTTPException(404, str(e))
+        short_cache(response, not out["total"])
+        return out
 
     @app.get("/api/analog", response_model=AnalogResult, response_model_by_alias=True)
     def analog_years(

@@ -156,3 +156,12 @@ def test_hexes_reject_a_backwards_period_and_a_day_over_several_months(client):
     assert client.get("/api/hexes", params={**BOX, "from": "2026-09", "to": "2026-08"}).status_code == 422
     assert client.get("/api/hexes", params={**BOX, "from": "2026-08", "to": "2026-09", "day": 5}).status_code == 422
     assert client.get("/api/hexes", params={**BOX, "ym": "2026-09"}).status_code == 422  # the old single-month form is gone
+
+
+def test_empty_answers_get_a_short_cache_and_full_ones_do_not(client):
+    """An empty answer may only mean the data was not loaded yet, so nginx keeps it a minute (X-Accel-Expires), not days."""
+    away = {"west": 0, "south": 50, "east": 5, "north": 55}
+    assert client.get("/api/monthly", params=away).headers.get("X-Accel-Expires") == "60"
+    assert client.get("/api/hexes", params={**away, "from": "2018-01", "to": "2018-03"}).headers.get("X-Accel-Expires") == "60"
+    assert "X-Accel-Expires" not in client.get("/api/monthly", params=BOX).headers
+    assert "X-Accel-Expires" not in client.get("/api/hexes", params={**BOX, "from": "2026-09", "to": "2026-09"}).headers
