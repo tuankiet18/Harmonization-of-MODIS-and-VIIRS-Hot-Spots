@@ -31,14 +31,14 @@ export class ApiDataSource implements DataSource {
   meta(): Promise<DataMeta> {
     return this.get('/api/meta', {});
   }
-  monthly(bbox: Bbox): Promise<MonthlyPoint[]> {
-    return this.get('/api/monthly', this.box(bbox));
+  monthly(bbox: Bbox, country?: string): Promise<MonthlyPoint[]> {
+    return this.get('/api/monthly', { ...this.box(bbox), country });
   }
-  daily(bbox: Bbox, yearMonth: string): Promise<DayPoint[]> {
-    return this.get('/api/daily', { ...this.box(bbox), ym: yearMonth });
+  daily(bbox: Bbox, yearMonth: string, country?: string): Promise<DayPoint[]> {
+    return this.get('/api/daily', { ...this.box(bbox), ym: yearMonth, country });
   }
   analog(bbox: Bbox, opts: AnalogOptions = {}): Promise<AnalogResult> {
-    return this.get('/api/analog', { ...this.box(bbox), year: opts.year, cutoff: opts.cutoffMonth });
+    return this.get('/api/analog', { ...this.box(bbox), year: opts.year, cutoff: opts.cutoffMonth, country: opts.country });
   }
   temps(bbox: Bbox, query: TempQuery, source: Source): Promise<TempSample> {
     return this.get('/api/temps', { ...this.box(bbox), day: 'day' in query ? query.day : undefined, month: 'month' in query ? query.month : undefined, source });

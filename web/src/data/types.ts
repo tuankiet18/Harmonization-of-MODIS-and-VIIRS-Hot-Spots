@@ -124,18 +124,20 @@ export interface AnalogResult {
 }
 
 export interface AnalogOptions {
+  /** The country's name in the data: follow its borders instead of the box. */
+  country?: string;
   year?: number;
   cutoffMonth?: number;
 }
 
 export interface DataSource {
   meta(): Promise<DataMeta>;
-  /** One point per month, summed over the cells whose centre lies inside bbox. */
-  monthly(bbox: Bbox): Promise<MonthlyPoint[]>;
+  /** One point per month, summed over the cells whose centre lies inside bbox. With `country` (its name in the data) the sum follows that country's borders instead. */
+  monthly(bbox: Bbox, country?: string): Promise<MonthlyPoint[]>;
   /** Fire map inside bbox for a period (or one day of a single month) as H3 res7 hexagons; each cell's days are summed over the period. */
   hexes(bbox: Bbox, range: DateRange, source: Source, day?: number, opts?: HexOptions): Promise<HexSample>;
   /** Day-by-day totals for one month inside bbox. Days add up to the monthly totals. */
-  daily(bbox: Bbox, yearMonth: string): Promise<DayPoint[]>;
+  daily(bbox: Bbox, yearMonth: string, country?: string): Promise<DayPoint[]>;
   /** Past years whose fire season looked most like the target year's so far. Absent when the data source cannot compute it. */
   analog?(bbox: Bbox, opts?: AnalogOptions): Promise<AnalogResult>;
   /** Hottest bright_mir (Celsius) per res7 cell on one day or in one month inside bbox. Absent when the data source has no temperatures. */

@@ -23,7 +23,8 @@ import { REGIONS } from './data/regions';
 import type { Bbox, DataMeta, DateRange, DayPoint, HexCell, HexSample, MonthlyPoint, Source, TempSample } from './data/types';
 import { useI18n } from './i18n';
 import { valueOf } from './lib/aggregate';
-import { buildCsv, buildDailyCsv, downloadText } from './lib/csv';
+import { buildCsv, buildDailyCsv, cutCellsCsv, downloadText } from './lib/csv';
+import { COUNTRY_DATA_NAMES } from './data/countryDataNames';
 import { loadCountries, type Country } from './lib/countries';
 import { pointInGeometry } from './lib/geo';
 import { HEX_AREA_KM2, TEMP_STEPS, hexSteps, viewportBox, type HexStep, type HexValue } from './lib/hex';
@@ -74,6 +75,9 @@ export default function App() {
   const [temps, setTemps] = useState<TempSample>(NO_TEMPS);
   const [tempsLoading, setTempsLoading] = useState(false);
 
+  // The country's name in the data (if it has one): the series then follow its borders, not the box around it.
+  const countryData = country ? COUNTRY_DATA_NAMES[country.id] : undefined;
+
   useEffect(() => {
     dataSource.meta().then((m) => {
       setMeta(m);
@@ -122,13 +126,13 @@ export default function App() {
     setLoading(true);
     setFailed(false);
     dataSource
-      .monthly(bbox)
+      .monthly(bbox, countryData)
       .then((r) => !cancelled && (setAll(r), setLoading(false)))
       .catch(() => !cancelled && (setFailed(true), setLoading(false)));
     return () => {
       cancelled = true;
     };
-  }, [bbox]);
+  }, [bbox, countryData]);
 
   const inRange = useMemo(() => all.filter((p) => p.yearMonth >= range.start && p.yearMonth <= range.end), [all, range]);
   const kRange = useMemo(() => computeKpis(inRange, source), [inRange, source]);
@@ -153,13 +157,13 @@ export default function App() {
     }
     let cancelled = false;
     dataSource
-      .daily(bbox, focus)
+      .daily(bbox, focus, countryData)
       .then((d) => !cancelled && setDaily(d))
       .catch(() => !cancelled && setDaily([]));
     return () => {
       cancelled = true;
     };
-  }, [bbox, focus, loading]);
+  }, [bbox, focus, loading, countryData]);
 
   // The map always shows the data's own res7 cells, but only those in view (plus a margin): panning asks for the next part.
   const hexBox = useMemo(() => (bbox ? viewportBox(bbox, view ? view.bounds : null) : null), [bbox, view]);
@@ -301,7 +305,8 @@ export default function App() {
   const exportCells = dataSource.cellsCsv
     ? async () => {
         if (!bbox || !focus || !dataSource.cellsCsv) return;
-        downloadText(`firecalendar_cells_${source}_${focus}.csv`, await dataSource.cellsCsv(bbox, focus, source));
+        const text = await dataSource.cellsCsv(bbox, focus, source);
+        downloadText(`firecalendar_cells_${source}_${focus}.csv`, country ? cutCellsCsv(text, country.geometry, country.name) : text);
       }
     : undefined;
 
@@ -500,7 +505,7 @@ export default function App() {
           {tab === 'analog' && (
             <div role="tabpanel" id="panel-analog" aria-labelledby="tab-analog" className="h-full bg-surface px-4 sm:px-7 lg:overflow-y-auto">
               <div className="mx-auto max-w-5xl">
-                <AnalogTab bbox={bbox} place={place} />
+                <AnalogTab bbox={bbox} country={countryData} place={place} />
                 {footer}
               </div>
             </div>

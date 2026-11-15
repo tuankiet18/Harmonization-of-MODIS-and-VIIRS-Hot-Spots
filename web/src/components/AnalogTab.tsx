@@ -11,11 +11,13 @@ type State = { kind: 'idle' | 'loading' | 'notBuilt' | 'noData' | 'error' } | { 
 
 interface Props {
   bbox: Bbox | null;
+  /** The selected country's name in the data, when one is selected. */
+  country?: string;
   place: string;
 }
 
 /** "Which past year does this season look like?" for the area chosen in the top bar. */
-export default function AnalogTab({ bbox, place }: Props) {
+export default function AnalogTab({ bbox, country, place }: Props) {
   const { t, months, monthsLong } = useI18n();
   const [year, setYear] = useState<number | undefined>();
   const [cutoff, setCutoff] = useState<number | undefined>();
@@ -26,14 +28,14 @@ export default function AnalogTab({ bbox, place }: Props) {
   useEffect(() => {
     setYear(undefined);
     setCutoff(undefined);
-  }, [bbox]);
+  }, [bbox, country]);
 
   useEffect(() => {
     if (!bbox || !dataSource.analog) return;
     let cancelled = false;
     setState((s) => (s.kind === 'ok' ? s : { kind: 'loading' }));
     dataSource
-      .analog(bbox, { year, cutoffMonth: cutoff })
+      .analog(bbox, { year, cutoffMonth: cutoff, country })
       .then((result) => !cancelled && setState({ kind: 'ok', result }))
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -43,7 +45,7 @@ export default function AnalogTab({ bbox, place }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [bbox, year, cutoff]);
+  }, [bbox, country, year, cutoff]);
 
   const message = (text: string, busy = false) => (
     <div className="flex flex-col gap-3 py-12" role="status" aria-busy={busy}>

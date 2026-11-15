@@ -1,4 +1,5 @@
 import type { Bbox, DataMeta, DateRange, DayPoint, MonthlyPoint, Source } from '../data/types';
+import { pointInGeometry, type CountryGeometry } from './geo';
 
 const f = (v: number | null) => (v === null ? '' : String(Math.round(v * 10) / 10));
 
@@ -47,6 +48,22 @@ export function buildDailyCsv(days: DayPoint[], yearMonth: string, meta: DataMet
   ];
   const rows = days.map((d) => [`${yearMonth}-${String(d.day).padStart(2, '0')}`, f(d.modis), f(d.viirs), f(d.harmonized)].join(','));
   return [...head, 'date,modis_raw,viirs_raw,harmonized', ...rows].join('\n') + '\n';
+}
+
+/** The fire-cells CSV from the server holds every cell in the area's box; keep the rows whose cell centre is inside the country's borders. */
+export function cutCellsCsv(text: string, geometry: CountryGeometry, country: string): string {
+  const lines = text.split('\n');
+  const header = lines.findIndex((l) => l.startsWith('date,'));
+  if (header < 0) return text;
+  const cols = lines[header].split(',');
+  const iLat = cols.indexOf('lat');
+  const iLon = cols.indexOf('lon');
+  const kept = lines.slice(header + 1).filter((l) => {
+    if (!l) return false;
+    const c = l.split(',');
+    return pointInGeometry(Number(c[iLon]), Number(c[iLat]), geometry);
+  });
+  return [...lines.slice(0, header), `# aoi_country: ${country} (cells with their centre inside its borders)`, lines[header], ...kept].join('\n') + '\n';
 }
 
 export function downloadText(filename: string, text: string) {

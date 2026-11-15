@@ -137,6 +137,8 @@ const en = {
   trendTitle: 'Monthly fire activity over time',
   calibrationOverlap: 'calibration overlap',
   mapMonthNote: 'Map shows {month}; click a month in the chart to change it.',
+  saveImage: 'Save chart as image',
+  imageFooter: 'FireCalendar · NASA FIRMS MODIS and VIIRS, harmonized · NASA Space Apps 2026',
   dlTitle: 'Download',
   dlMonthly: 'Monthly totals (CSV)',
   dlMonthlyHint: 'One row per month for the area and period in the top bar: the sensor counts, the combined value and how it was made.',
