@@ -17,6 +17,7 @@ What is dropped, so the numbers describe fires in vegetation that the sensors ar
     `frp_sum` and `temp_max` come from whole rows, so they can still include a few low-confidence points of a mixed row.
 
 The day and night passes of one date count once. Files in the older and the newer schema can be built together.
+In the final harmonized files (`record_origin`) only S-NPP is kept as VIIRS; see the docstring comment in the code.
 """
 import argparse
 import json
@@ -40,6 +41,16 @@ def build_hex_months(src: str, out_dir: Path, keep_low_confidence: bool = False,
     else:
         good = "(CASE WHEN conf_tier = 'low' THEN 0 ELSE point_count END)"
     type_ok = "COALESCE(type, 0) = 0" if "type" in cols and not keep_static else "TRUE"
+    # The older files name the sensor in `sensor_family`; the final harmonized files give `record_origin` (observed VIIRS, or MODIS
+    # estimated onto the VIIRS scale) and `source_platform`. Only S-NPP counts as 'viirs': it flew alone from 2012 to 2018, so its
+    # counts stay comparable over time. NOAA-20 and later satellites are dropped (they add overpasses and so inflate cell-days).
+    if "sensor_family" in cols:
+        sensor, platform_ok = "lower(sensor_family)", "TRUE"
+    elif "record_origin" in cols:
+        sensor = "CASE WHEN record_origin = 'OBSERVED_VIIRS' THEN 'viirs' ELSE 'modis' END"
+        platform_ok = "(record_origin <> 'OBSERVED_VIIRS' OR source_platform = 'S-NPP')" if "source_platform" in cols else "TRUE"
+    else:
+        raise ValueError("the input needs a `sensor_family` or a `record_origin` column")
     temp = "CAST(max(bright_mir) AS FLOAT)" if "bright_mir" in cols else "CAST(NULL AS FLOAT)"
     frp = "CAST(sum(frp) AS FLOAT)" if "frp" in cols else "CAST(NULL AS FLOAT)"
 
@@ -49,7 +60,7 @@ def build_hex_months(src: str, out_dir: Path, keep_low_confidence: bool = False,
             SELECT h3_res7,
                    CAST(any_value(center_lat) AS FLOAT) AS center_lat,
                    CAST(any_value(center_lon) AS FLOAT) AS center_lon,
-                   lower(sensor_family) AS sensor,
+                   {sensor} AS sensor,
                    country,
                    strftime(acq_date, '%Y-%m') AS ym,
                    CAST(bit_or(1 << (day(acq_date) - 1)) AS INTEGER) AS days_mask,
@@ -57,8 +68,8 @@ def build_hex_months(src: str, out_dir: Path, keep_low_confidence: bool = False,
                    {temp} AS temp_max,
                    {frp} AS frp_sum
             FROM (SELECT *, {good} AS good_points FROM {read})
-            WHERE {type_ok} AND good_points > 0
-            GROUP BY h3_res7, lower(sensor_family), country, strftime(acq_date, '%Y-%m')
+            WHERE {type_ok} AND {platform_ok} AND good_points > 0
+            GROUP BY h3_res7, {sensor}, country, strftime(acq_date, '%Y-%m')
         ) TO '{out_dir.as_posix()}' (FORMAT PARQUET, COMPRESSION ZSTD, PARTITION_BY (ym), OVERWRITE_OR_IGNORE)
         """
     )

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import build_analog_weekly as analog_gen  # noqa: E402
 import make_sample_data as gen  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.main import create_app  # noqa: E402
@@ -20,6 +21,7 @@ BOX = {"west": -60, "south": -10, "east": -56, "north": -6}
 def data_dir(tmp_path_factory):
     d = tmp_path_factory.mktemp("data")
     gen.build(d, regions=[TINY])
+    analog_gen.build_synthetic(d, regions=[TINY])
     return d
 
 

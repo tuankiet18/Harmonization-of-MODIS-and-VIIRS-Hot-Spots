@@ -26,7 +26,10 @@ class Settings:
     # (computed from the per-month hex files, which then must cover the months you want to show).
     series_source: str = field(default_factory=lambda: os.getenv("SERIES_SOURCE", "sample"))
     # Hard cap on hexagons returned by /api/hexes.
-    max_hexes: int = field(default_factory=lambda: int(os.getenv("MAX_HEXES", "8000")))
+    max_hexes: int = field(default_factory=lambda: int(os.getenv("MAX_HEXES", "60000")))
+    # Folder with the data team's per-year harmonized files (YYYY.parquet), read for the one-day temperature map (/api/temps).
+    # Unset: that endpoint answers 404 and the web app hides the temperature view.
+    raw_dir: Path | None = field(default_factory=lambda: Path(os.environ["RAW_DIR"]) if os.getenv("RAW_DIR") else None)
     # Hard cap on rows in a CSV export.
     max_export_rows: int = field(default_factory=lambda: int(os.getenv("MAX_EXPORT_ROWS", "500000")))
 

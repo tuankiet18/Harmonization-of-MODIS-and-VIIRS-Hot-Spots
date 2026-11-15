@@ -74,6 +74,50 @@ class HexSample(Camel):
     used: int  # res7 cells returned (less than total when the cap cut the quietest cells off)
 
 
+class TempCell(Camel):
+    h3: str
+    # Hottest mid-infrared brightness temperature (bright_mir) seen in the cell, in degrees Celsius.
+    temp_c: float
+    n: int  # observations behind it
+
+
+class TempSample(Camel):
+    cells: list[TempCell]
+    total: int  # cells with fire in the area and period
+    used: int  # cells returned
+    metric: str  # which column the temperature comes from
+    kelvin_offset: float = 273.15
+
+
+class AnalogCandidate(Camel):
+    year: int
+    score_pct: float
+    margin_pct: float
+    cosine_pct: float
+    dtw_pct: float
+    cum_frp_mw: float
+    era: Literal["modis", "viirs"]
+
+
+class AnalogSeries(Camel):
+    year: int
+    frp: list[float]  # weekly FRP (MW), weeks 1..52
+
+
+class AnalogResult(Camel):
+    target_year: int
+    cutoff_month: int
+    cutoff_week: int
+    years: list[int]  # target years that can be compared (the picker's options)
+    ranking: list[AnalogCandidate]
+    target_frp: list[float]  # weeks 1..cutoff_week of the target year
+    fire_so_far_pct: float  # target year's FRP up to the cut-off, as % of a typical whole earlier year
+    series: list[AnalogSeries]  # the best analog years, whole years, best first
+    source: str
+    method: str
+    is_mock: bool
+
+
 class ExplainRequest(Camel):
     bbox: Bbox
     year_month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")

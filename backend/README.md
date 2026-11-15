@@ -28,9 +28,10 @@ All box parameters are `west, south, east, north` in degrees (`south < north`, `
 | `GET /api/monthly?box` | One row per month: `modis, viirs, harmonized, cells, anyNrt, allInCalibration, methods, scaleFactor`. About 60 KB for any area. |
 | `GET /api/daily?box&ym` | One row per day of that month. Days add up to the month. |
 | `GET /api/points?box&ym[&source][&day][&limit]` | `{points: [{lat, lon, sensor}], total}`. A stable sample of at most `MAX_POINTS`, plus the true total. |
-| `GET /api/hexes?box&from&to[&source][&day][&limit]` | `{cells: [{h3, days}], total, used}`. H3 res7 hexagons with fire over the period `from`..`to` (`YYYY-MM`), what the map draws; `days` = days with a detection summed over its months (a `day` needs `from` = `to`), `total` = cells with fire, `used` = cells returned (the cap is `MAX_HEXES`). |
+| `GET /api/hexes?box&from&to[&source][&day][&limit][&res]` | `{cells: [{h3, days}], total, used}`. H3 res7 hexagons with fire over the period `from`..`to` (`YYYY-MM`), what the map draws; `days` = days with a detection summed over its months (a `day` needs `from` = `to`); `res` (3 coarsest to 7, the default) makes the server add the cells up into bigger hexagons, so nothing is cut off, `total` = cells with fire, `used` = cells returned (the cap is `MAX_HEXES`). |
 | `GET /api/export.csv?box&start&end[&level=monthly\|daily][&series]` | CSV with a provenance header (method, version, source, area, period). |
 | `POST /api/explain` | `{text, provider, facts}` for one month. Rate limited per client. |
+| `GET /api/analog?box[&year][&cutoff]` | Past years whose fire season looks most like `year` (default: the latest) up to the end of month `cutoff` (default: the latest the data covers): ranking with scores, the weekly FRP of the target year and of the closest years, and `fireSoFarPct`. Needs `analog_weekly.parquet` (below), otherwise `404`. |
 
 Errors: `422` bad box or month, `404` no data for that month and area, `429` rate limit, `501` LLM provider not implemented.
 
@@ -64,6 +65,27 @@ python scripts/build_hex_months.py --src "D:/data/parquet_h3_world/**/*.parquet"
 Restart the API afterwards. The script reads the data team's updated schema (`type`, `conf_l`/`conf_n`/`conf_h`) and the older one; it drops static sources (`type` other than 0) and low-confidence points, and keeps the hottest brightness temperature (`temp_max`) and summed FRP (`frp_sum`) of each cell and month. Set `SERIES_SOURCE=hex` to also draw the charts from these files, once they cover the months you want to show. The input is about 7 GB, so run it where the data lives (for example Colab with Drive mounted) and copy the output over.
 On one small file the output was about 40% of the input size; a denser VIIRS year has not been measured.
 
+## Similar years (`/api/analog`)
+
+The data team's burning-calendar notebook (`colab/colab_burning_calendar_analog.ipynb`) ranks past years by how much their season so far
+looks like the current one: 50 % cosine similarity plus 50 % banded DTW over weekly FRP, thermal contrast and confidence.
+`app/analog.py` is a pure-Python port of those formulas; scores matched the notebook's numpy functions exactly on random data.
+
+It reads one small table, `analog_weekly.parquet` + `analog_meta.json`, built once from the per-year harmonized files:
+
+```bash
+python scripts/build_analog_weekly.py --src D:/data/harmonize_final --out data/real   # real data, about 7 s per 20 million rows
+python scripts/build_analog_weekly.py --synthetic --out data/sample                   # SYNTHETIC demo data, flagged isMock
+```
+
+- One row per (1 degree bin, year, week) with sums, so any area is the sum of the bins whose centre lies inside it.
+  Verified against the notebook's own SQL on the real 2018 file: weekly sums agree to 1e-14 for three areas.
+- Vegetation fires only (`type = 0`), one record per H3 cell-day (max FRP), so several satellites over one cell count once.
+- Complete 7-day weeks only: a cut-off at the end of June compares 25 weeks, never reads days after it.
+- `margin` is `100 - score`. It is **not** a confidence interval, and the score compares the *shape* of a season, not its size.
+- `fireSoFarPct` is the target year's FRP so far as a share of a typical whole earlier year. When it is low (a wet season) the
+  match rests on very little data, and the web app says so.
+
 ## Settings (environment variables)
 
 | Variable | Default | Meaning |
@@ -73,7 +95,8 @@ On one small file the output was about 40% of the input size; a denser VIIRS yea
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated origins allowed from a browser. Add the Netlify URL when deployed |
 | `EXPLAIN_PROVIDER` | `template` | `template` needs no key. `llm` is the hook for the AI teammates |
 | `EXPLAIN_RATE_PER_MIN` | `10` | Per-client limit for `/api/explain` |
-| `MAX_POINTS`, `MAX_HEXES`, `MAX_EXPORT_ROWS` | `4000`, `8000`, `500000` | Server-side caps |
+| `RAW_DIR` | unset | Folder with the data team's per-year files (`2023.parquet`…). Needed for `/api/temps` (the Calendar tab's temperature map); without it that endpoint answers 404 and the map falls back to a message. |
+| `MAX_POINTS`, `MAX_HEXES`, `MAX_EXPORT_ROWS` | `4000`, `60000`, `500000` | Server-side caps |
 
 ## For the AI teammates
 

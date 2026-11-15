@@ -1,15 +1,18 @@
+import calendar
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
+from . import analog
 from .config import Settings, get_settings
 from .explain import build_facts, get_explainer
 from .schemas import (
+    AnalogResult,
     Bbox,
     DataMeta,
     DayPoint,
@@ -19,8 +22,9 @@ from .schemas import (
     HotspotSample,
     MonthlyPoint,
     Source,
+    TempSample,
 )
-from .store import Store
+from .store import DataError, Store
 
 YM = r"^\d{4}-(0[1-9]|1[0-2])$"
 
@@ -55,7 +59,7 @@ class RateLimiter:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    store = Store(settings.data_dir, series_from_hex=settings.series_source == "hex")
+    store = Store(settings.data_dir, series_from_hex=settings.series_source == "hex", raw_dir=settings.raw_dir)
     explainer = get_explainer(settings.explain_provider)
     limiter = RateLimiter(settings.explain_rate_per_min)
 
@@ -96,7 +100,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         """Raw detections for the map: a deterministic sample of at most `limit` points, plus the true total."""
         sensors = ["modis", "viirs"] if source == "harmonized" else [source]
-        rows, total = store.points(box, ym, sensors, day, min(limit, settings.max_points))
+        try:
+            rows, total = store.points(box, ym, sensors, day, min(limit, settings.max_points))
+        except DataError as e:
+            raise HTTPException(404, str(e))
         return {"points": rows, "total": total}
 
     @app.get("/api/hexes", response_model=HexSample, response_model_by_alias=True)
@@ -106,22 +113,96 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         end: Annotated[str, Query(alias="to", pattern=YM)],
         source: Source = "harmonized",
         day: Annotated[int | None, Query(ge=1, le=31)] = None,
-        limit: Annotated[int, Query(ge=1)] = 8000,
+        limit: Annotated[int, Query(ge=1)] = 60000,
+        res: Annotated[int, Query(ge=3, le=7)] = 7,
     ):
-        """Fire map as H3 res7 hexagons for a period: the days (summed over the months) each ~5 km2 cell had a detection."""
+        """Fire map as H3 hexagons for a period: the days (summed over the months) with a detection, added up over the res7 cells
+        (~5 km2) inside each hexagon of resolution `res` (3 coarsest .. 7 the data's own cells)."""
         if start > end:
             raise HTTPException(422, "from must not be after to.")
         if day is not None and start != end:
             raise HTTPException(422, "A single day needs from and to to be the same month.")
         sensors = ["modis", "viirs"] if source == "harmonized" else [source]
-        return store.hexes(box, start, end, sensors, day, min(limit, settings.max_hexes))
+        return store.hexes(box, start, end, sensors, day, min(limit, settings.max_hexes), res)
+
+    @app.get("/api/temps", response_model=TempSample, response_model_by_alias=True)
+    def temps(
+        box: Annotated[Bbox, Depends(bbox_params)],
+        day: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")] = None,
+        month: Annotated[str | None, Query(pattern=YM)] = None,
+        source: Source = "harmonized",
+        limit: Annotated[int, Query(ge=1)] = 60000,
+    ):
+        """The hottest mid-infrared brightness temperature (bright_mir, Celsius) per res7 cell on one day (`day`, YYYY-MM-DD) or
+        over one month (`month`, YYYY-MM): the map's temperature view. Needs RAW_DIR; 404 without it."""
+        if (day is None) == (month is None):
+            raise HTTPException(422, "Give either day or month.")
+        if not store.has_cells:
+            raise HTTPException(404, "Temperature data is not available for this dataset (no cells table and no RAW_DIR).")
+        if day is not None:
+            try:
+                d = date.fromisoformat(day)
+            except ValueError:
+                raise HTTPException(422, "day is not a calendar date.")
+            start = end = d.isoformat()
+        else:
+            y, m = int(month[:4]), int(month[5:])  # type: ignore[index]
+            start, end = f"{y}-{m:02d}-01", f"{y}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
+        sensors = ["modis", "viirs"] if source == "harmonized" else [source]
+        try:
+            return store.temps(box, start, end, sensors, min(limit, settings.max_hexes))
+        except DataError as e:
+            raise HTTPException(404, str(e))
+
+    @app.get("/api/analog", response_model=AnalogResult, response_model_by_alias=True)
+    def analog_years(
+        box: Annotated[Bbox, Depends(bbox_params)],
+        year: Annotated[int | None, Query(ge=1900, le=2100)] = None,
+        cutoff: Annotated[int | None, Query(ge=1, le=12)] = None,
+    ):
+        """Past years whose fire season looked most like `year` so far (weeks up to the end of month `cutoff`).
+        Without `year` it is the latest comparable year; without `cutoff` the latest month that year's data covers."""
+        if store.analog_meta is None:
+            raise HTTPException(404, "Analog data is not built for this dataset (see scripts/build_analog_weekly.py).")
+        weeks = store.analog_weeks(box)
+        years = analog.usable_target_years(weeks)
+        if not years:
+            raise HTTPException(404, "No fire records in this area to compare years.")
+        target = year if year is not None else years[-1]
+        if target not in years:
+            raise HTTPException(404, f"No data to compare {target} with earlier years in this area.")
+        month = cutoff if cutoff is not None else analog.default_cutoff_month(target, weeks[target])
+        if month is None:
+            raise HTTPException(422, f"{target} has less than a month of data in this area.")
+        cutoff_week = analog.cutoff_week_for(target, month)
+        if cutoff_week > analog.last_data_week(weeks[target]):
+            raise HTTPException(422, f"{target} has no data up to that month yet.")
+        ranking = analog.rank_similar_years(weeks, target, cutoff_week)
+        if not ranking:
+            raise HTTPException(404, "No earlier year has fire records in the compared weeks.")
+        meta = store.analog_meta
+        first_viirs = int(meta.get("viirsFromYear", 2012))
+        top = ranking[:5]
+        return {
+            "targetYear": target,
+            "cutoffMonth": month,
+            "cutoffWeek": cutoff_week,
+            "years": years,
+            "ranking": [{**r, "era": "viirs" if r["year"] >= first_viirs else "modis"} for r in top],
+            "targetFrp": analog.weekly_frp(weeks[target], cutoff_week),
+            "fireSoFarPct": analog.fire_so_far_pct(weeks, target, cutoff_week),
+            "series": [{"year": r["year"], "frp": analog.weekly_frp(weeks[r["year"]], 52)} for r in top[:3]],
+            "source": meta.get("source", ""),
+            "method": meta.get("method", ""),
+            "isMock": bool(meta.get("isMock", False)),
+        }
 
     @app.get("/api/export.csv")
     def export_csv(
         box: Annotated[Bbox, Depends(bbox_params)],
         start: Annotated[str, Query(pattern=YM)],
         end: Annotated[str, Query(pattern=YM)],
-        level: Annotated[str, Query(pattern="^(monthly|daily)$")] = "monthly",
+        level: Annotated[str, Query(pattern="^(monthly|daily|cells)$")] = "monthly",
         series: Source = "harmonized",
     ) -> Response:
         """CSV download with a provenance header (method, version, source, area, period)."""
@@ -144,7 +225,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def num(v: float | None) -> str:
             return "" if v is None else str(round(v, 1))
 
-        if level == "monthly":
+        if level == "cells":
+            if not store.has_cells:
+                raise HTTPException(404, "Hotspot data is not available for this dataset (no cells table and no RAW_DIR).")
+            sensors = ["modis", "viirs"] if series == "harmonized" else [series]
+            try:
+                found = store.export_cells(box, start, end, sensors, settings.max_export_rows)
+            except DataError as e:
+                raise HTTPException(404, str(e))
+            if len(found) >= settings.max_export_rows:
+                head.append(f"# truncated: only the first {settings.max_export_rows} rows (oldest first); ask for a shorter period")
+            head.append("# columns: hottest_bright_mir_c is the hottest mid-infrared brightness temperature (Celsius), frp_mw the strongest fire radiative power (MW), observations the readings behind the cell-day")
+            cols = "date,h3,lat,lon,hottest_bright_mir_c,frp_mw,observations"
+            rows = [",".join([r["date"], r["h3"], str(r["lat"]), str(r["lon"]), num(r["temp_c"]), num(r["frp_mw"]), str(r["n"])]) for r in found]
+        elif level == "monthly":
             cols = "year_month,modis_raw,viirs_raw,harmonized,method,scale_factor,in_calibration,data_status,cells"
             rows = [
                 ",".join([

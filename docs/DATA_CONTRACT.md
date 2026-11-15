@@ -55,6 +55,8 @@ Bản đồ vẽ **ô lục giác H3 res7 (~5,16 km²)**, giống bản đồ tr
 - Backend gom theo ô: `GET /api/hexes?box&from&to[&source][&day][&limit]` (`from`, `to` là `YYYY-MM`) trả `{cells: [{h3, days}], total, used}`. `days` là số ngày có cháy của ô, **cộng qua các tháng của khoảng** (bằng 1 khi chọn một ngày, lúc đó `from` và `to` phải cùng tháng), tức số **ô-ngày** của ô res7. `total` là số ô res7 có cháy, `used` là số ô trả về (nhỏ hơn `total` khi bị cắt bởi giới hạn `MAX_HEXES`).
 - Web tự gộp theo độ phân giải phù hợp với kích thước vùng chọn (res7 cho vùng nhỏ, res4 cho vùng cỡ 10°…): giá trị của lục giác lớn là tổng ô-ngày của các ô res7 bên trong, nên cùng đơn vị với toàn ứng dụng. Chú giải đổi theo giá trị lớn nhất.
 - **Dữ liệu thật của team (`parquet_h3_world`)** là bảng bước 2: mỗi dòng một (ngày, ngày/đêm, `sensor_family`, `h3_res7`, `country`) kèm `center_lat/lon`, `point_count`, `frp`, `conf_tier`. Script `backend/scripts/build_hex_months.py` nén thành mỗi (ô, cảm biến, nước, tháng) một dòng trong `<DATA_DIR>/hex/ym=YYYY-MM/*.parquet`, với `days_mask` (bit d-1 bật khi ô có cháy ngày d, nên số bit bật là số ngày có cháy và lọc theo ngày được) và `points`. Có thư mục `hex/` thì `/api/hexes` chỉ đọc từ đó; tháng nào không có file thì trả rỗng.
+- `GET /api/hexes` nhận thêm `res` (3 đến 7, mặc định 7): máy chủ cộng các ô res7 vào lục giác cha cỡ đó (tính ô cha bằng phép toán bit trên mã H3, đã đối chiếu với thư viện h3), nên không ô-ngày nào bị mất khi gộp; `limit` áp dụng cho số lục giác trả về, không phải số ô bên trong.
+- **Tháng chỉ có Terra** (trước 2002-07, khi Aqua chưa bay): chuỗi tháng và ngày để trống giá trị hài hòa (số MODIS thô vẫn có), vì Terra một mình chỉ thấy khoảng một phần tư những gì Terra cộng Aqua thấy.
 - Chuỗi hiển thị khi `source=harmonized`: **MODIS trước 2013-01, VIIRS từ 2013-01**, chọn theo từng tháng nên một khoảng vắt qua 2013 dùng MODIS cho các tháng trước đó và VIIRS cho các tháng sau (số ngày gốc, chưa nhân hệ số; nhân hệ số không có nghĩa với số ngày của từng ô). Nên tổng các lục giác có thể khác số trên lịch ở các năm trước 2013.
 - **Bản cập nhật của team** (đã có `type`, `conf_l`, `conf_n`, `conf_h`): script bỏ hàng `type` khác 0 (nguồn cố định, núi lửa, ngoài khơi) và bỏ đúng các điểm tin cậy thấp bằng `conf_l`. File cũ (không có các cột đó) vẫn đọc được: không lọc `type`, bỏ hàng `conf_tier = low`. File tháng có thêm `temp_max` (nhiệt độ sáng cao nhất, K) và `frp_sum` (MW).
 - Còn lại của dữ liệu đầu vào: VIIRS từ 2018 có thể gộp S-NPP và NOAA-20 nên số ô-ngày có bậc nhảy (cần team xác nhận); chưa rõ `type` được gộp thế nào khi một ô-ngày có nhiều điểm.
@@ -84,3 +86,23 @@ Khi người dùng chọn một tháng, web app hiện **lịch theo ngày** c�
 - Nên tải theo tháng khi cần (vd file theo vùng/tháng), không cần tải cả 26 năm theo ngày.
 - File điểm cháy (mục trên) cần có thêm cột `acq_date` hoặc `day` để lọc theo ngày; `DataSource.points(bbox, yearMonth, source, day?)` trả về điểm của riêng ngày đó.
 - Bộ chọn khoảng thời gian (Từ/Đến) vẫn theo tháng. Chọn khoảng theo ngày cần dữ liệu ngày cho cả giai đoạn.
+
+## Bảng tuần cho "năm tương đồng" (`/api/analog`)
+
+Thuật toán của team data (`colab_burning_calendar_analog.ipynb`) cần FRP, độ tương phản nhiệt `(bright_mir - bright_tir) / bright_tir` và độ tin cậy,
+những cột không có trong bảng ô-ngày. Backend đọc một bảng riêng `analog_weekly.parquet` (kèm `analog_meta.json`), dựng một lần từ các file năm
+của team (`YYYY.parquet`, 25 cột) bằng `backend/scripts/build_analog_weekly.py`:
+
+| Cột | Ý nghĩa |
+|---|---|
+| `bin_lat`, `bin_lon` | Tâm ô 1° |
+| `year`, `week` | Năm, tuần 1..52 (khối 7 ngày từ 1/1; tuần 52 gồm cả các ngày cuối năm) |
+| `sum_frp` | Tổng, theo ô H3-ngày, của FRP lớn nhất trong ô-ngày (MW) |
+| `sum_score` | Tổng `frp × trọng số tin cậy × độ tương phản nhiệt` |
+| `sum_temp`, `sum_conf` | Tổng độ tương phản nhiệt, tổng trọng số tin cậy `(1,0 conf_h + 0,6 conf_n + 0,2 conf_l) / point_count` |
+| `n_cells` | Số ô H3-ngày |
+
+- Chỉ `type = 0`. Nhiều vệ tinh trong cùng một ô-ngày chỉ tính một lần (lấy FRP lớn nhất), nên không bị đếm đôi dù file final tách từng `source_platform`.
+- Vùng bất kỳ là tổng các ô 1° có tâm nằm trong vùng (xấp xỉ ở biên). Vùng nhỏ hơn 1° có thể không có ô nào.
+- Ghi chú trung thực: điểm số so **hình dạng** mùa cháy, không so độ lớn; "biên" `100 - điểm` không phải khoảng tin cậy; chuỗi trước 2012 chỉ có MODIS.
+
