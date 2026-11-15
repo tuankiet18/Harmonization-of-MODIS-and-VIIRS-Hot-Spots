@@ -112,10 +112,15 @@ describe('period presets', () => {
 describe('share-link state', () => {
   const regions = { amazon: { west: -66, south: -14, east: -52, north: -4 } };
   const limits = { min: '2000-11', max: '2026-10' };
-  const base = { regionId: 'amazon', countryId: null, tab: 'overview', bbox: regions.amazon, range: { start: '2000-11', end: '2026-10' }, source: 'harmonized' as const, month: null };
+  const base = { regionId: 'amazon', countryId: null, tab: 'overview', bbox: regions.amazon, range: { start: '2021-11', end: '2026-10' }, source: 'harmonized' as const, month: null };
 
   it('omits everything that is a default', () => {
     expect(encodeState(base, limits)).toBe('area=amazon');
+  });
+  it('says so in the link when the period is not the default last 5 years (all years included)', () => {
+    const all = { ...base, range: { start: '2000-11', end: '2026-10' } };
+    expect(encodeState(all, limits)).toBe('area=amazon&from=2000-11&to=2026-10');
+    expect(decodeState(encodeState(all, limits), regions, limits).range).toEqual({ start: '2000-11', end: '2026-10' });
   });
   it('round-trips a preset area with range, series and month', () => {
     const s = { ...base, range: { start: '2015-01', end: '2020-12' }, source: 'viirs' as const, month: '2019-09' };

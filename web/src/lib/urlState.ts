@@ -1,4 +1,5 @@
 import type { Bbox, DateRange, Source } from '../data/types';
+import { presetRange } from './range';
 
 export interface ShareState {
   regionId: string; // preset id, 'custom', 'country' or 'none'
@@ -25,8 +26,12 @@ export function encodeState(s: ShareState, limits: Limits): string {
   p.set('area', s.regionId);
   if (s.regionId === 'country' && s.countryId) p.set('country', s.countryId);
   if (s.regionId === 'custom' && s.bbox) p.set('bbox', [s.bbox.west, s.bbox.south, s.bbox.east, s.bbox.north].map(r3).join(','));
-  if (s.range.start !== limits.min) p.set('from', s.range.start);
-  if (s.range.end !== limits.max) p.set('to', s.range.end);
+  // The default period is the last 5 years, so a link to any other period (all years included) must say so.
+  const usual = presetRange(limits, 5);
+  if (s.range.start !== usual.start || s.range.end !== usual.end) {
+    p.set('from', s.range.start);
+    p.set('to', s.range.end);
+  }
   if (s.source !== 'harmonized') p.set('src', s.source);
   if (s.month) p.set('month', s.month);
   if (s.tab !== 'overview') p.set('tab', s.tab);

@@ -29,6 +29,7 @@ import { loadCountries, type Country } from './lib/countries';
 import { pointInGeometry } from './lib/geo';
 import { HEX_AREA_KM2, TEMP_STEPS, hexSteps, viewportBox, type HexStep, type HexValue } from './lib/hex';
 import { monthCount, nearestMonth } from './lib/months';
+import { presetRange } from './lib/range';
 import { anomalySeries, computeKpis, daysInPeriod, monthsVsUsual, periodAnomaly, seasonalProfile, seasonProgress, topCells } from './lib/stats';
 import { DEFAULT_TAB, isTab, TABS } from './tabs';
 import { decodeState, encodeState } from './lib/urlState';
@@ -83,7 +84,8 @@ export default function App() {
       setMeta(m);
       setLimits({ min: m.firstMonth, max: m.lastMonth });
       const shared = decodeState(window.location.search, PRESET_BOXES, { min: m.firstMonth, max: m.lastMonth }).range;
-      setRange(shared ?? { start: m.firstMonth, end: m.lastMonth });
+      // A first visit opens on the last 5 years (light to load); a shared link keeps its own period.
+      setRange(shared ?? presetRange({ min: m.firstMonth, max: m.lastMonth }, 5));
       setSynced(true);
     });
   }, []);
