@@ -16,8 +16,6 @@ What is dropped, so the numbers describe fires in vegetation that the sensors ar
     (a day whose points are all low confidence disappears); without them (older files) rows with conf_tier 'low' are removed.
     `frp_sum` and `temp_max` come from whole rows, so they can still include a few low-confidence points of a mixed row.
 
-Rows are sorted by H3 index and written in small row groups, so a query for a small area skips most of the file (the cells of one
-area sit next to each other and each row group knows its latitude and longitude range).
 The day and night passes of one date count once. Files in the older and the newer schema can be built together.
 In the final harmonized files (`record_origin`) only S-NPP is kept as VIIRS; see the docstring comment in the code.
 """
@@ -72,8 +70,7 @@ def build_hex_months(src: str, out_dir: Path, keep_low_confidence: bool = False,
             FROM (SELECT *, {good} AS good_points FROM {read})
             WHERE {type_ok} AND {platform_ok} AND good_points > 0
             GROUP BY h3_res7, {sensor}, country, strftime(acq_date, '%Y-%m')
-            ORDER BY h3_res7
-        ) TO '{out_dir.as_posix()}' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 10000, PARTITION_BY (ym), OVERWRITE_OR_IGNORE)
+        ) TO '{out_dir.as_posix()}' (FORMAT PARQUET, COMPRESSION ZSTD, PARTITION_BY (ym), OVERWRITE_OR_IGNORE)
         """
     )
     rows = con.execute(f"SELECT count(*) FROM read_parquet('{out_dir.as_posix()}/ym=*/*.parquet', hive_partitioning = true)").fetchone()[0]

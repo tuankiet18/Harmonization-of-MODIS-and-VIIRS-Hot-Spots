@@ -37,7 +37,8 @@ About 3 GB of output; roughly 30 to 60 minutes. `--only hex bins cells analog` r
   files (the `country` column of the data; the web app maps the border countries to the data's names in `web/src/data/countryDataNames.ts`,
   and a country without a name there falls back to its box). The fire-cells CSV is cut to the borders in the browser. A drawn or typed
   rectangle is a rectangle. Rectangles at least 2 degrees wide and high use the 0.25 degree table (edge off by at most one bin);
-  smaller ones read the hex files, which are sorted by H3 index so they skip most of the data.
+  smaller ones read the hex files themselves and are exact but slower (a few seconds for a first look at a 1 degree box; tried sorting the
+  files by H3 index: it did not make DuckDB skip any data, so it was dropped).
 - **Temperature map:** `bright_mir`, the 4 µm channel, hottest reading per cell and day or month, in degrees Celsius. (`bright_tir` mostly
   follows the time of the overpass: 29 C by day, 15 C at night.)
 - **Known limits:** Central Africa reads about 15 to 20 % lower after 2012 than before; Similar years still uses every satellite
