@@ -3,8 +3,6 @@
 One consistent fire calendar from MODIS and VIIRS hotspots, 2000 to 2025.
 NASA Space Apps Challenge 2026, challenge **Harmonization of MODIS and VIIRS Hot Spots** (team TH).
 
-Live demo: https://18-141-67-33.nip.io (a small EC2 instance; it may be offline after the event).
-
 ## The problem
 
 NASA's fire hotspots come from two generations of satellites. MODIS (Terra and Aqua, 1 km pixels, since 2000) is ending its
