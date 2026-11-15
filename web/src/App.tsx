@@ -171,9 +171,9 @@ export default function App() {
   const boxKey = hexBox ? `${hexBox.west}|${hexBox.south}|${hexBox.east}|${hexBox.north}` : '';
   // The map follows the period chosen in the top bar. Only a single day (picked on the Calendar tab) narrows it to its month.
   // The map follows the whole period of the top bar (whole years come from a per-cell-and-year table on the server, so even all 25 years take about a second).
-  const oneMonth = day !== null && !!focus;
-  const hexStart = oneMonth && focus ? focus : range.start;
-  const hexEnd = oneMonth && focus ? focus : range.end;
+  // A day picked on the Calendar tab belongs to that tab's own map; the Overview always shows the whole period.
+  const hexStart = range.start;
+  const hexEnd = range.end;
   useEffect(() => {
     if (!showHexes || !hexBox || !synced) {
       setHexes(NO_HEXES);
@@ -188,14 +188,14 @@ export default function App() {
       setHexesLoading(false);
     };
     dataSource
-      .hexes(hexBox, { start: hexStart, end: hexEnd }, source, day ?? undefined, { res: 7, country: countryData })
+      .hexes(hexBox, { start: hexStart, end: hexEnd }, source, undefined, { res: 7, country: countryData })
       .then(done)
       .catch(() => done(NO_HEXES));
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boxKey, hexStart, hexEnd, source, day, showHexes, synced, countryData]);
+  }, [boxKey, hexStart, hexEnd, source, showHexes, synced, countryData]);
 
   // The Calendar tab colours the map by temperature: the hottest reading of the picked day, or of the whole month when no day is picked.
   const tempQuery = focus ? (day !== null ? { day: `${focus}-${pad2(day)}` } : { month: focus }) : null;
@@ -229,13 +229,13 @@ export default function App() {
     if (group !== 'where' || !bbox || !synced) return;
     let cancelled = false;
     dataSource
-      .hexes(bbox, { start: hexStart, end: hexEnd }, source, day ?? undefined, { res: 7, limit: 300 })
+      .hexes(bbox, { start: hexStart, end: hexEnd }, source, undefined, { res: 7, limit: 300, country: countryData })
       .then((h) => !cancelled && setWhereRaw(h.cells))
       .catch(() => !cancelled && setWhereRaw([]));
     return () => {
       cancelled = true;
     };
-  }, [group, bbox, hexStart, hexEnd, source, day, synced]);
+  }, [group, bbox, hexStart, hexEnd, source, synced, countryData]);
 
   const region = REGIONS.find((r) => r.id === regionId);
   const place = country ? country.name : (region && (region.enInSentence ?? region.name)) || t('placeCustom');
@@ -437,7 +437,7 @@ export default function App() {
         <main className="min-h-0 min-w-0 flex-1">
           {tab === 'overview' && (
             <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" className="grid h-full lg:grid-cols-[minmax(0,1.1fr)_minmax(420px,1fr)] lg:grid-rows-[minmax(0,1fr)]">
-              {mapArea({ cells: hexView.items, steps: hexView.steps, kind: 'days', legend: day !== null ? 'day' : 'period', caption, empty: !loading && !hexesLoading && hexes.total === 0 })}
+              {mapArea({ cells: hexView.items, steps: hexView.steps, kind: 'days', legend: 'period', caption, empty: !loading && !hexesLoading && hexes.total === 0 })}
 
               <div className="min-w-0 bg-surface px-4 lg:overflow-y-auto lg:border-l lg:border-line lg:px-7">
                 {rawNotice}
