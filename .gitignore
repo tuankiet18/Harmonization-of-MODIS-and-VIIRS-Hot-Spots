@@ -3,3 +3,11 @@
 data/
 *.zip
 *.parquet
+
+# Local machine files
+docker-compose.override.yml
+.claude/settings.local.json
+.netlify/
+web/tsconfig.tsbuildinfo
+__pycache__/
+*.tsbuildinfo

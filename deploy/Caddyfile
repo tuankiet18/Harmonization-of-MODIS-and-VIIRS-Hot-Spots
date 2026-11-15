@@ -1,0 +1,5 @@
+# Automatic HTTPS (Let's Encrypt) for SITE_ADDRESS, e.g. 13-250-1-2.nip.io (nip.io resolves to the dashed IP). `localhost` gives a local certificate.
+{$SITE_ADDRESS:localhost} {
+	encode zstd gzip
+	reverse_proxy web:80
+}

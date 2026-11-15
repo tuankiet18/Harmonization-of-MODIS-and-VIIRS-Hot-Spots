@@ -67,6 +67,11 @@ docker compose restart api
 
 On Windows Git Bash prefix the first line with `MSYS_NO_PATHCONV=1`. Months without a file show no hexagons; see `backend/README.md`.
 
+After the hex files change, also run `python scripts/build_monthly_bins.py --hex <hex folder>` (about 1 minute for 25 years). It writes
+`monthly_bins.parquet` next to the hex files; the api uses it for the monthly series of areas at least 2 degrees wide and high, which
+drops a first load from 6 to 60 seconds to about 0.1 second. Smaller areas still read the hex files and stay exact; large areas differ
+by at most one 0.25 degree bin at the edge (Vietnam 2013: +1.5%). The api image holds the code, so rebuild it (`docker compose up -d --build api`).
+
 ## How the site gets its data
 
 The site reads `/api/meta`, `/api/monthly`, `/api/daily` and `/api/points` (`web/src/data/ApiDataSource.ts`). Which source is used is

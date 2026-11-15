@@ -1,0 +1,49 @@
+# Production stack for one server (EC2): Caddy (HTTPS) -> web (nginx + the site) -> api (FastAPI + DuckDB).
+#   cd deploy && SITE_ADDRESS=1-2-3-4.nip.io docker compose -f docker-compose.prod.yml up -d --build
+# The data folder (built by backend/scripts/build_final_data.py) is read-only and lives on the host: /srv/firecalendar/data
+services:
+  api:
+    build: ../backend
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /srv/data/final
+      SERIES_SOURCE: hex
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://${SITE_ADDRESS:-localhost}}
+      EXPLAIN_PROVIDER: ${EXPLAIN_PROVIDER:-template}
+    # Behind the proxies every request comes from the proxy; trust its forwarded address so the rate limit is per visitor.
+    command: ["sh", "-c", "uvicorn app.asgi:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-2} --proxy-headers --forwarded-allow-ips='*'"]
+    volumes:
+      - ${DATA_HOST_DIR:-/srv/firecalendar/data}:/srv/data/final:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build:
+      context: ../web
+      args:
+        VITE_DATA_SOURCE: api
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+volumes:
+  caddy-data:

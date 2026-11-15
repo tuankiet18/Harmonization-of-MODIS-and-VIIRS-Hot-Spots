@@ -1,0 +1,10 @@
+# Local override (auto-loaded by `docker compose`): read the final harmonized data from the host instead of the volume.
+services:
+  api:
+    environment:
+      RAW_DIR: /srv/data/raw
+    volumes:
+      - C:/nasa-data/hex:/srv/data/sample/hex:ro
+      - C:/nasa-data/analog/analog_weekly.parquet:/srv/data/sample/analog_weekly.parquet:ro
+      - C:/nasa-data/analog/analog_meta.json:/srv/data/sample/analog_meta.json:ro
+      - C:/nasa-data/harmonize_final:/srv/data/raw:ro
