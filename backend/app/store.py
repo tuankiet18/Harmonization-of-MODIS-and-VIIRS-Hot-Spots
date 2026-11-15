@@ -5,6 +5,8 @@ Parquet (docs/DATA_CONTRACT.md). The API only filters, sums and returns it.
 """
 import calendar
 import json
+import os
+import threading
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
@@ -64,6 +66,8 @@ class Store:
         # Optional per-month hex files built by scripts/build_hex_months.py from the data team's world H3 parquet.
         self.hex_dir = data_dir / "hex" if any((data_dir / "hex").glob("ym=*")) else None
         self._series_cache: dict[tuple, tuple] = {}
+        # A few queries at a time, the rest wait: DuckDB already uses every core for one query, so running 40 at once only makes every one slower.
+        self._gate = threading.Semaphore(int(os.getenv("DB_CONCURRENCY", "2")))
         # Optional pre-added table (scripts/build_monthly_bins.py): the monthly series of a big area without scanning every hex file.
         bins = data_dir / "hex" / "monthly_bins.parquet"
         self._bins = bins if bins.exists() else None
@@ -98,13 +102,14 @@ class Store:
 
     # ---- helpers -------------------------------------------------------------------------------------------
     def _rows(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
-        cur = self.con.cursor()  # one cursor per call: safe under FastAPI's thread pool
-        try:
-            cur.execute(sql, params)
-            names = [d[0] for d in cur.description]
-            return [dict(zip(names, r)) for r in cur.fetchall()]
-        finally:
-            cur.close()
+        with self._gate:
+            cur = self.con.cursor()  # one cursor per call: safe under FastAPI's thread pool
+            try:
+                cur.execute(sql, params)
+                names = [d[0] for d in cur.description]
+                return [dict(zip(names, r)) for r in cur.fetchall()]
+            finally:
+                cur.close()
 
     @staticmethod
     def _box(b: Bbox) -> list[float]:
