@@ -1,6 +1,7 @@
 """Builds analog_weekly.parquet (+ analog_meta.json): the weekly table behind /api/analog (docs/DATA_CONTRACT.md).
 
-One row per (1 degree bin, year, week). It holds sums, so any area is the sum of the bins whose centre lies inside it:
+One row per (1 degree bin, year, week). It holds sums, so any area is the sum of the bins whose centre lies inside it
+(analog_weekly_country.parquet has the same sums per country, for the Country views):
 
     sum_frp    sum over H3 cell-days of the cell-day's maximum FRP (MW)
     sum_score  sum of frp * confidence weight * thermal contrast          (the notebook's "fire score")
@@ -79,7 +80,33 @@ def build_real(src: Path, out_dir: Path, years: list[int] | None = None, threads
                 ) TO '{_q(Path(tmp) / f'{year}.parquet')}' (FORMAT PARQUET, COMPRESSION ZSTD)
                 """
             )
+            # The same weekly sums by country (a cell on a border counts for both countries), for the Country views.
+            (Path(tmp) / "country").mkdir(exist_ok=True)
+            con.execute(
+                f"""
+                COPY (
+                  WITH cell_day AS (
+                    SELECT acq_date, h3_res7, country,
+                           MAX(CAST(frp AS DOUBLE)) AS cell_frp,
+                           MAX(GREATEST(bright_mir - bright_tir, 0.0) / GREATEST(bright_tir, 1.0)) AS cell_temp,
+                           AVG((1.0 * conf_h + 0.6 * conf_n + 0.2 * conf_l) / GREATEST(point_count, 1)) AS cell_conf
+                    FROM read_parquet('{_q(f)}')
+                    WHERE type = 0 AND year(acq_date) = {year}
+                    GROUP BY acq_date, h3_res7, country
+                  )
+                  SELECT country, CAST({year} AS SMALLINT) AS year,
+                         CAST(LEAST((dayofyear(acq_date) - 1) // 7 + 1, 52) AS TINYINT) AS week,
+                         SUM(cell_frp) AS sum_frp, SUM(cell_frp * cell_conf * cell_temp) AS sum_score,
+                         SUM(cell_temp) AS sum_temp, SUM(cell_conf) AS sum_conf, CAST(COUNT(*) AS INTEGER) AS n_cells
+                  FROM cell_day GROUP BY 1, 2, 3
+                ) TO '{_q(Path(tmp) / 'country' / f'{year}.parquet')}' (FORMAT PARQUET, COMPRESSION ZSTD)
+                """
+            )
             print(f"  {year}: done", flush=True)
+        con.execute(
+            f"COPY (SELECT * FROM read_parquet('{_q(Path(tmp) / 'country')}/*.parquet') ORDER BY country, year, week) "
+            f"TO '{_q(out_dir / 'analog_weekly_country.parquet')}' (FORMAT PARQUET, COMPRESSION ZSTD)"
+        )
         n = _finish(con, Path(tmp), out_dir)
         con.close()
     meta = _meta(

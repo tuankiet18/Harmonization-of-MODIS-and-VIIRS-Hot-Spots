@@ -16,8 +16,9 @@ python scripts/build_final_data.py --src C:/nasa-data/harmonize_final --out C:/n
 |---|---|---|
 | `hex/ym=YYYY-MM/*.parquet` | `build_hex_months.py` | the map, the monthly and daily series (cell-days per sensor) |
 | `hex/monthly_bins.parquet` | `build_monthly_bins.py` | the monthly series of areas at least 2 degrees wide, in milliseconds |
+| `hex/monthly_countries.parquet` | `build_monthly_bins.py` | the monthly series of a country by its borders (the `country` column) |
 | `cells/ym=YYYY-MM/*.parquet` | `build_cells.py` | the temperature map and the "Fire cells" CSV (hottest `bright_mir` per cell-day) |
-| `analog_weekly.parquet`, `analog_meta.json` | `build_analog_weekly.py` | the Similar years tab |
+| `analog_weekly.parquet`, `analog_weekly_country.parquet`, `analog_meta.json` | `build_analog_weekly.py` | the Similar years tab (by box or by country) |
 
 About 3 GB of output; roughly 30 to 60 minutes. `--only hex bins cells analog` runs single steps, `--years 2020 2021` a few years.
 
@@ -32,8 +33,11 @@ About 3 GB of output; roughly 30 to 60 minutes. `--only hex bins cells analog` r
 - **Combined series:** before 2012-02 the MODIS count is multiplied by a per-calendar-month factor (S-NPP / MODIS, fitted 2012-02 to 2022-12 for
   the chosen area); from 2012-02 S-NPP is used as it is. Before 2002-07 only Terra flew, so those months have no combined value.
 - **Gaps:** a few days are missing in 2001-06/07 and 2002-03/04 (Terra offline). The record ends 2025-12.
-- **Area:** a rectangle. A country is its bounding box, so the calendar, the CSV files and Similar years include a little of the neighbours;
-  the map is cut to the borders. Areas at least 2 degrees wide and high use the 0.25 degree table (edge off by at most one bin, e.g. +1.5 % for Vietnam 2013).
+- **Area:** a country follows its real borders in the calendar, the trend charts, the daily calendar, Similar years and the monthly and daily CSV
+  files (the `country` column of the data; the web app maps the border countries to the data's names in `web/src/data/countryDataNames.ts`,
+  and a country without a name there falls back to its box). The fire-cells CSV is cut to the borders in the browser. A drawn or typed
+  rectangle is a rectangle. Rectangles at least 2 degrees wide and high use the 0.25 degree table (edge off by at most one bin);
+  smaller ones read the hex files, which are sorted by H3 index so they skip most of the data.
 - **Temperature map:** `bright_mir`, the 4 µm channel, hottest reading per cell and day or month, in degrees Celsius. (`bright_tir` mostly
   follows the time of the overpass: 29 C by day, 15 C at night.)
 - **Known limits:** Central Africa reads about 15 to 20 % lower after 2012 than before; Similar years still uses every satellite

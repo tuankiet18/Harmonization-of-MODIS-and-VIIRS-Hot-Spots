@@ -29,6 +29,9 @@ from .store import DataError, Store
 YM = r"^\d{4}-(0[1-9]|1[0-2])$"
 
 
+Country = Annotated[str | None, Query(max_length=80, description="Country name as written in the data (e.g. Vietnam, Russian_Federation): follow its borders instead of the box.")]
+
+
 def bbox_params(
     west: Annotated[float, Query(ge=-180, le=180)],
     south: Annotated[float, Query(ge=-90, le=90)],
@@ -81,14 +84,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return store.meta()
 
     @app.get("/api/monthly", response_model=list[MonthlyPoint], response_model_by_alias=True)
-    def monthly(box: Annotated[Bbox, Depends(bbox_params)]):
-        """Per-month totals for the box (what the calendar and trend chart need)."""
-        return store.monthly(box)
+    def monthly(box: Annotated[Bbox, Depends(bbox_params)], country: Country = None):
+        """Per-month totals for the box, or for a country by its borders (what the calendar and trend chart need)."""
+        return store.monthly(box, country)
 
     @app.get("/api/daily", response_model=list[DayPoint], response_model_by_alias=True)
-    def daily(box: Annotated[Bbox, Depends(bbox_params)], ym: Annotated[str, Query(pattern=YM)]):
+    def daily(box: Annotated[Bbox, Depends(bbox_params)], ym: Annotated[str, Query(pattern=YM)], country: Country = None):
         """Per-day totals for one month. Days add up to the month's totals."""
-        return store.daily(box, ym)
+        return store.daily(box, ym, country)
 
     @app.get("/api/points", response_model=HotspotSample, response_model_by_alias=True)
     def points(
@@ -159,12 +162,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         box: Annotated[Bbox, Depends(bbox_params)],
         year: Annotated[int | None, Query(ge=1900, le=2100)] = None,
         cutoff: Annotated[int | None, Query(ge=1, le=12)] = None,
+        country: Country = None,
     ):
         """Past years whose fire season looked most like `year` so far (weeks up to the end of month `cutoff`).
         Without `year` it is the latest comparable year; without `cutoff` the latest month that year's data covers."""
         if store.analog_meta is None:
             raise HTTPException(404, "Analog data is not built for this dataset (see scripts/build_analog_weekly.py).")
-        weeks = store.analog_weeks(box)
+        weeks = store.analog_weeks(box, country)
         years = analog.usable_target_years(weeks)
         if not years:
             raise HTTPException(404, "No fire records in this area to compare years.")
@@ -204,6 +208,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         end: Annotated[str, Query(pattern=YM)],
         level: Annotated[str, Query(pattern="^(monthly|daily|cells)$")] = "monthly",
         series: Source = "harmonized",
+        country: Country = None,
     ) -> Response:
         """CSV download with a provenance header (method, version, source, area, period)."""
         if start > end:
@@ -218,6 +223,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             f"# harmonization_method: {m.method}",
             f"# displayed_series: {series}",
             f"# aoi_bbox (west,south,east,north): {box.west},{box.south},{box.east},{box.north}",
+            *([f"# aoi_country: {country} (its borders, not the box)"] if country else []),
             f"# date_range: {start}..{end}",
             f"# generated: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
         ]
@@ -246,13 +252,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "" if r["scaleFactor"] is None else f"{r['scaleFactor']:.3f}",
                     str(r["allInCalibration"]).lower(), "nrt" if r["anyNrt"] else "standard", str(r["cells"]),
                 ])
-                for r in store.export_monthly(box, start, end, settings.max_export_rows)
+                for r in store.export_monthly(box, start, end, settings.max_export_rows, country)
             ]
         else:
             cols = "date,modis_raw,viirs_raw,harmonized"
             rows = [
                 ",".join([r["date"], num(r["modis_raw"]), num(r["viirs_raw"]), num(r["harmonized"])])
-                for r in store.export_daily(box, start, end, settings.max_export_rows)
+                for r in store.export_daily(box, start, end, settings.max_export_rows, country)
             ]
         body = "\n".join([*head, cols, *rows]) + "\n"
         name = f"firecalendar_{level}_{series}_{start}_{end}.csv"

@@ -67,6 +67,8 @@ class Store:
         # Optional pre-added table (scripts/build_monthly_bins.py): the monthly series of a big area without scanning every hex file.
         bins = data_dir / "hex" / "monthly_bins.parquet"
         self._bins = bins if bins.exists() else None
+        countries = data_dir / "hex" / "monthly_countries.parquet"
+        self._countries = countries if countries.exists() else None
         if series_from_hex and self.hex_dir is None:
             raise DataError(f"SERIES_SOURCE=hex needs hex files in {data_dir / 'hex'} (see scripts/build_hex_months.py).")
         self._hex_series = series_from_hex
@@ -84,6 +86,12 @@ class Store:
             self.analog_meta = json.loads(analog_json.read_text(encoding="utf-8"))
             path = analog_file.as_posix().replace("'", "''")
             self.con.execute(f"CREATE VIEW analog_weekly AS SELECT * FROM read_parquet('{path}')")
+        # Optional per-country weekly table: the same sums by country instead of by 1 degree bin.
+        country_file = data_dir / "analog_weekly_country.parquet"
+        self._analog_countries = country_file.exists() and self.analog_meta is not None
+        if self._analog_countries:
+            path = country_file.as_posix().replace("'", "''")
+            self.con.execute(f"CREATE VIEW analog_weekly_country AS SELECT * FROM read_parquet('{path}')")
         self._analog_cache: dict[tuple, dict] = {}
 
     # ---- helpers -------------------------------------------------------------------------------------------
@@ -120,12 +128,23 @@ class Store:
             }
         )
 
-    def _series(self, b: Bbox) -> tuple[dict[str, dict[str, tuple[int, int]]], dict[int, float], float | None]:
-        """Cell-days and cells per month and sensor inside the box, plus the MODIS -> VIIRS factors fitted on the overlap years."""
-        key = tuple(self._box(b))
+    def _series(self, b: Bbox, country: str | None = None) -> tuple[dict[str, dict[str, tuple[int, int]]], dict[int, float], float | None]:
+        """Cell-days and cells per month and sensor inside the box (or inside a country, by its name in the data), plus the
+        MODIS -> VIIRS factors fitted on the overlap years."""
+        country = country if self._countries is not None else None  # without the per-country table the box is all there is
+        key = (country, *self._box(b))
         if key in self._series_cache:
             return self._series_cache[key]
-        if self._bins is not None and b.north - b.south >= BINS_MIN_SPAN and b.east - b.west >= BINS_MIN_SPAN:
+        if country is not None:
+            path = self._countries.as_posix().replace("'", "''")  # type: ignore[union-attr]
+            rows = self._rows(
+                f"""
+                SELECT ym, sensor, CAST(SUM(days) AS BIGINT) AS days, CAST(SUM(cells) AS BIGINT) AS cells
+                FROM read_parquet('{path}') WHERE country = ? GROUP BY ym, sensor
+                """,
+                [country],
+            )
+        elif self._bins is not None and b.north - b.south >= BINS_MIN_SPAN and b.east - b.west >= BINS_MIN_SPAN:
             path = self._bins.as_posix().replace("'", "''")
             rows = self._rows(
                 f"""
@@ -168,8 +187,8 @@ class Store:
         self._series_cache[key] = (by, factors, fallback)
         return by, factors, fallback
 
-    def _monthly_from_files(self, b: Bbox) -> list[dict[str, Any]]:
-        by, factors, fallback = self._series(b)
+    def _monthly_from_files(self, b: Bbox, country: str | None = None) -> list[dict[str, Any]]:
+        by, factors, fallback = self._series(b, country)
         out = []
         for ym in sorted(by):
             s = by[ym]
@@ -201,7 +220,7 @@ class Store:
             )
         return out
 
-    def _daily_from_files(self, b: Bbox, ym: str) -> list[dict[str, Any]]:
+    def _daily_from_files(self, b: Bbox, ym: str, country: str | None = None) -> list[dict[str, Any]]:
         files = sorted((self.hex_dir / f"ym={ym}").glob("*.parquet"))  # type: ignore[operator]
         if not files:
             return []
@@ -211,17 +230,17 @@ class Store:
             SELECT t.d AS day, sensor, CAST(SUM((mask >> (t.d - 1)) & 1) AS INTEGER) AS n
             FROM (
                 SELECT h3_res7, sensor, bit_or(days_mask) AS mask FROM read_parquet([{flist}])
-                WHERE center_lat BETWEEN ? AND ? AND center_lon BETWEEN ? AND ?
+                WHERE center_lat BETWEEN ? AND ? AND center_lon BETWEEN ? AND ?{" AND country = ?" if country else ""}
                 GROUP BY h3_res7, sensor
             ) m, generate_series(1, 31) AS t(d)
             GROUP BY t.d, sensor
             """,
-            self._box(b),
+            [*self._box(b), *([country] if country else [])],
         )
         counts: dict[str, dict[int, int]] = {}
         for r in rows:
             counts.setdefault(r["sensor"], {})[int(r["day"])] = int(r["n"])
-        _, factors, fallback = self._series(b)
+        _, factors, fallback = self._series(b, country)
         month = int(ym[5:])
         factor = None if ym < AQUA_START else factors.get(month, fallback)
         out = []
@@ -240,10 +259,10 @@ class Store:
         assert self._meta is not None
         return self._meta
 
-    def monthly(self, b: Bbox) -> list[dict[str, Any]]:
-        """One row per month, summed over the grid cells whose centre lies inside the box."""
+    def monthly(self, b: Bbox, country: str | None = None) -> list[dict[str, Any]]:
+        """One row per month, summed over the grid cells whose centre lies inside the box (or inside the named country)."""
         if self._hex_series:
-            return self._monthly_from_files(b)
+            return self._monthly_from_files(b, country)
         return self._rows(
             """
             SELECT year_month AS "yearMonth",
@@ -265,9 +284,9 @@ class Store:
             self._box(b),
         )
 
-    def daily(self, b: Bbox, year_month: str) -> list[dict[str, Any]]:
+    def daily(self, b: Bbox, year_month: str, country: str | None = None) -> list[dict[str, Any]]:
         if self._hex_series:
-            return self._daily_from_files(b, year_month)
+            return self._daily_from_files(b, year_month, country)
         return self._rows(
             """
             SELECT CAST(day(date) AS INTEGER) AS day,
@@ -360,14 +379,14 @@ class Store:
         )
         return {"cells": [{"h3": r["h3"], "days": r["days"]} for r in rows], "total": int(rows[0]["total"]) if rows else 0, "used": len(rows)}
 
-    def export_monthly(self, b: Bbox, start: str, end: str, limit: int) -> list[dict[str, Any]]:
-        return [r for r in self.monthly(b) if start <= r["yearMonth"] <= end][:limit]
+    def export_monthly(self, b: Bbox, start: str, end: str, limit: int, country: str | None = None) -> list[dict[str, Any]]:
+        return [r for r in self.monthly(b, country) if start <= r["yearMonth"] <= end][:limit]
 
-    def export_daily(self, b: Bbox, start: str, end: str, limit: int) -> Iterator[dict[str, Any]]:
+    def export_daily(self, b: Bbox, start: str, end: str, limit: int, country: str | None = None) -> Iterator[dict[str, Any]]:
         if self._hex_series:
             n = 0
             for ym in (m for m in self._hex_months() if start <= m <= end):
-                for d in self._daily_from_files(b, ym):
+                for d in self._daily_from_files(b, ym, country):
                     if n >= limit:
                         return
                     n += 1
@@ -488,22 +507,34 @@ class Store:
             out.extend(self._rows(query, [first, last, *self._box(b), limit - len(out)]))
         return out
 
-    def analog_weeks(self, b: Bbox) -> dict[int, dict[int, tuple[float, float, float, float, int]]]:
-        """Weekly sums per year inside the box (bins whose centre lies in it): year -> week -> (frp, score, temp, conf, cell-days)."""
+    def analog_weeks(self, b: Bbox, country: str | None = None) -> dict[int, dict[int, tuple[float, float, float, float, int]]]:
+        """Weekly sums per year inside the box (bins whose centre lies in it) or for a named country:
+        year -> week -> (frp, score, temp, conf, cell-days)."""
         if self.analog_meta is None:
             return {}
-        key = tuple(self._box(b))
+        country = country if self._analog_countries else None
+        key = (country, *self._box(b))
         if key in self._analog_cache:
             return self._analog_cache[key]
-        rows = self._rows(
-            """
-            SELECT year, week, SUM(sum_frp) AS f, SUM(sum_score) AS s, SUM(sum_temp) AS t, SUM(sum_conf) AS c, SUM(n_cells) AS n
-            FROM analog_weekly
-            WHERE bin_lat BETWEEN ? AND ? AND bin_lon BETWEEN ? AND ?
-            GROUP BY year, week
-            """,
-            self._box(b),
-        )
+        if country is not None:
+            sql, params = (
+                """
+                SELECT year, week, SUM(sum_frp) AS f, SUM(sum_score) AS s, SUM(sum_temp) AS t, SUM(sum_conf) AS c, SUM(n_cells) AS n
+                FROM analog_weekly_country WHERE country = ? GROUP BY year, week
+                """,
+                [country],
+            )
+        else:
+            sql, params = (
+                """
+                SELECT year, week, SUM(sum_frp) AS f, SUM(sum_score) AS s, SUM(sum_temp) AS t, SUM(sum_conf) AS c, SUM(n_cells) AS n
+                FROM analog_weekly
+                WHERE bin_lat BETWEEN ? AND ? AND bin_lon BETWEEN ? AND ?
+                GROUP BY year, week
+                """,
+                self._box(b),
+            )
+        rows = self._rows(sql, params)
         out: dict[int, dict[int, tuple[float, float, float, float, int]]] = {}
         for r in rows:
             out.setdefault(int(r["year"]), {})[int(r["week"])] = (float(r["f"]), float(r["s"]), float(r["t"]), float(r["c"]), int(r["n"]))
