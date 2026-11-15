@@ -55,6 +55,7 @@ const en = {
   bboxInvalid: 'Check the box: south must be below north (−90 to 90) and west below east (−180 to 180).',
   mapCaptionAll: '{cells} hexagons with fire (about {km2} km² each)',
   mapCaptionSample: '{cells} hexagons (about {km2} km² each); only the busiest {shown} of {n} are drawn',
+  mapLoadFailed: 'The fire map could not be loaded. Try again in a moment.',
   mapCaptionLoading: 'Loading fire hexagons',
 
   periodTitle: 'Period',

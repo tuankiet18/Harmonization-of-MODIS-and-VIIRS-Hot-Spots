@@ -19,6 +19,7 @@ import Toolbar from './components/Toolbar';
 import TrendChart from './components/TrendChart';
 import { btn } from './components/ui';
 import { dataSource } from './data';
+import { ApiError } from './data/ApiDataSource';
 import { REGIONS } from './data/regions';
 import type { Bbox, DataMeta, DateRange, DayPoint, HexCell, HexSample, MonthlyPoint, Source, TempSample } from './data/types';
 import { useI18n } from './i18n';
@@ -36,6 +37,22 @@ import { decodeState, encodeState } from './lib/urlState';
 
 const NO_HEXES: HexSample = { cells: [], total: 0, used: 0 };
 const NO_TEMPS: TempSample = { cells: [], total: 0, used: 0, metric: 'bright_mir' };
+/**
+ * Ask again before giving up: a request that fails while the server is busy or restarting usually works a moment later. A refusal that
+ * will not change (no data here, a bad request) is not asked twice.
+ */
+async function retried<T>(run: () => Promise<T>, cancelled: () => boolean): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await run();
+    } catch (e) {
+      const final = e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 429;
+      if (final || i >= 2 || cancelled()) throw e;
+      await new Promise((r) => setTimeout(r, 2500 * (i + 1)));
+      if (cancelled()) throw e;
+    }
+  }
+}
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const PRESET_BOXES = Object.fromEntries(REGIONS.map((r) => [r.id, r.bbox]));
 // Only the area, series and month are read before the data limits are known; the range is read after.
@@ -73,6 +90,8 @@ export default function App() {
   // On by default: the hexagons are the point of the map, so they should not hide behind a folded section.
   const [showHexes, setShowHexes] = useState(true);
   const [hexesLoading, setHexesLoading] = useState(true);
+  const [hexesFailed, setHexesFailed] = useState(false);
+  const [tempsFailed, setTempsFailed] = useState(false);
   const [temps, setTemps] = useState<TempSample>(NO_TEMPS);
   const [tempsLoading, setTempsLoading] = useState(false);
 
@@ -184,15 +203,18 @@ export default function App() {
     }
     let cancelled = false;
     setHexesLoading(true);
+    setHexesFailed(false);
     const done = (s: HexSample) => {
       if (cancelled) return;
       setHexes(s);
       setHexesLoading(false);
     };
-    dataSource
-      .hexes(hexBox, { start: hexStart, end: hexEnd }, source, undefined, { res: 7, country: countryData })
+    retried(() => dataSource.hexes(hexBox, { start: hexStart, end: hexEnd }, source, undefined, { res: 7, country: countryData }), () => cancelled)
       .then(done)
-      .catch(() => done(NO_HEXES));
+      .catch(() => {
+        if (!cancelled) setHexesFailed(true);
+        done(NO_HEXES);
+      });
     return () => {
       cancelled = true;
     };
@@ -210,15 +232,19 @@ export default function App() {
     }
     let cancelled = false;
     setTempsLoading(true);
+    setTempsFailed(false);
     const done = (s: TempSample) => {
       if (cancelled) return;
       setTemps(s);
       setTempsLoading(false);
     };
-    dataSource
-      .temps(hexBox, tempQuery, source)
+    const temps = dataSource.temps.bind(dataSource);
+    retried(() => temps(hexBox, tempQuery, source), () => cancelled)
       .then(done)
-      .catch(() => done(NO_TEMPS));
+      .catch(() => {
+        if (!cancelled) setTempsFailed(true);
+        done(NO_TEMPS);
+      });
     return () => {
       cancelled = true;
     };
@@ -335,7 +361,9 @@ export default function App() {
   const tempWhen = focus ? (day !== null ? `${day} ${fmtMonth(focus)}` : fmtMonth(focus)) : '';
   const tempCaption = tempsLoading
     ? t('tempLoading')
-    : !dataSource.temps
+    : tempsFailed
+      ? t('mapLoadFailed')
+      : !dataSource.temps
       ? t('tempUnavailable')
       : tempView.length === 0
         ? t('tempNone', { when: day !== null ? `on ${tempWhen}` : `in ${tempWhen}` })
@@ -359,7 +387,9 @@ export default function App() {
 
   const captionBase = hexesLoading
     ? t('mapCaptionLoading')
-    : hexes.total === 0
+    : hexesFailed
+      ? t('mapLoadFailed')
+      : hexes.total === 0
       ? t('mapCaptionNone')
       : hexes.used < hexes.total
         ? t('mapCaptionSample', { cells: fmt(hexView.items.length), km2: hexView.km2, shown: fmt(hexes.used), n: fmt(hexes.total) })
@@ -416,12 +446,12 @@ export default function App() {
   const footer = <p className="border-t border-line pb-6 pt-4 text-sm text-muted">{t('footer')}</p>;
 
   // The map beside the results: the Overview colours it by days with fire, the Calendar by temperature.
-  const mapArea = (p: { cells: HexValue[]; steps: HexStep[]; kind: 'days' | 'tempC'; sparse?: boolean; legend: 'period' | 'day' | 'tempDay' | 'tempMonth'; caption: string; empty: boolean }) => (
+  const mapArea = (p: { cells: HexValue[]; steps: HexStep[]; kind: 'days' | 'tempC'; sparse?: boolean; legend: 'period' | 'day' | 'tempDay' | 'tempMonth'; caption: string; empty: boolean; failed?: boolean }) => (
     <div className="relative h-[46vh] min-h-72 lg:h-auto lg:min-h-0">
       <MapPanel bbox={bbox} fitSignal={fitSignal} drawing={drawing} onDrawn={drawn} cells={showHexes ? p.cells : []} outline={country ? country.geometry : null} onView={setView} flyTo={flyTo} steps={p.steps} valueKind={p.kind} sparse={p.sparse} onPickRegion={pickRegion} />
       {showHexes && bbox && p.empty && (
         <p className="pointer-events-none absolute bottom-10 right-3 z-10 max-w-64 rounded-lg bg-surface/95 px-3 py-2 text-sm shadow-sm" role="status">
-          {t('mapCaptionNone')}
+          {p.failed ? t('mapLoadFailed') : t('mapCaptionNone')}
         </p>
       )}
       <MapLegend hasArea={!!bbox} hexMode={showHexes && p.cells.length > 0 ? p.legend : null} steps={p.steps} caption={p.caption} />
@@ -439,7 +469,7 @@ export default function App() {
         <main className="min-h-0 min-w-0 flex-1">
           {tab === 'overview' && (
             <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" className="grid h-full lg:grid-cols-[minmax(0,1.1fr)_minmax(420px,1fr)] lg:grid-rows-[minmax(0,1fr)]">
-              {mapArea({ cells: hexView.items, steps: hexView.steps, kind: 'days', legend: 'period', caption, empty: !loading && !hexesLoading && hexes.total === 0 })}
+              {mapArea({ cells: hexView.items, steps: hexView.steps, kind: 'days', legend: 'period', caption, empty: !loading && !hexesLoading && (hexes.total === 0 || hexesFailed), failed: hexesFailed })}
 
               <div className="min-w-0 bg-surface px-4 lg:overflow-y-auto lg:border-l lg:border-line lg:px-7">
                 {rawNotice}
@@ -512,7 +542,7 @@ export default function App() {
 
           {tab === 'calendar' && (
             <div role="tabpanel" id="panel-calendar" aria-labelledby="tab-calendar" className="grid h-full lg:grid-cols-[minmax(0,1.1fr)_minmax(420px,1fr)] lg:grid-rows-[minmax(0,1fr)]">
-              {mapArea({ cells: tempView, steps: TEMP_STEPS, kind: 'tempC', sparse: day !== null, legend: day !== null ? 'tempDay' : 'tempMonth', caption: tempCaption, empty: !!tempQuery && !tempsLoading && !!dataSource.temps && temps.total === 0 })}
+              {mapArea({ cells: tempView, steps: TEMP_STEPS, kind: 'tempC', sparse: day !== null, legend: day !== null ? 'tempDay' : 'tempMonth', caption: tempCaption, empty: !!tempQuery && !tempsLoading && !!dataSource.temps && (temps.total === 0 || tempsFailed), failed: tempsFailed })}
 
               <div className="min-w-0 bg-surface px-4 lg:overflow-y-auto lg:border-l lg:border-line lg:px-7">
                 {rawNotice}
