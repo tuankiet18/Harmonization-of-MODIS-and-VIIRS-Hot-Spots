@@ -174,3 +174,19 @@ def test_the_real_data_needs_no_sample_tables_and_has_no_raw_points(series_dir, 
     assert c.get("/api/monthly", params=BOX).status_code == 200
     assert c.get("/api/hexes", params={**BOX, "from": "2013-01", "to": "2013-01"}).status_code == 200
     assert c.get("/api/points", params={**BOX, "ym": "2013-01"}).status_code == 404
+
+
+def test_a_map_of_whole_years_reads_the_yearly_table_and_gives_the_same_cells(series_dir, series_client, tmp_path):
+    from build_cell_years import build_cell_years
+
+    shutil.copytree(series_dir, tmp_path / "d", dirs_exist_ok=True)
+    assert build_cell_years(tmp_path / "d" / "hex") > 0
+    fast = make_client(tmp_path / "d", series_source="hex")
+    # 2011-06..2011-12 are single months, 2013 and 2014 are whole years: both paths are used and added up
+    params = {**BOX, "from": "2011-06", "to": "2014-12", "res": 7}
+    slow_cells = {c["h3"]: c["days"] for c in series_client.get("/api/hexes", params=params).json()["cells"]}
+    fast_json = fast.get("/api/hexes", params=params).json()
+    assert {c["h3"]: c["days"] for c in fast_json["cells"]} == slow_cells and slow_cells
+    # a coarser hexagon adds the same days up
+    coarse = {**params, "res": 4}
+    assert fast.get("/api/hexes", params=coarse).json()["cells"] == series_client.get("/api/hexes", params=coarse).json()["cells"]

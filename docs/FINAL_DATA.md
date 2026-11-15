@@ -17,6 +17,7 @@ python scripts/build_final_data.py --src C:/nasa-data/harmonize_final --out C:/n
 | `hex/ym=YYYY-MM/*.parquet` | `build_hex_months.py` | the map, the monthly and daily series (cell-days per sensor) |
 | `hex/monthly_bins.parquet` | `build_monthly_bins.py` | the monthly series of areas at least 2 degrees wide, in milliseconds |
 | `hex/monthly_countries.parquet` | `build_monthly_bins.py` | the monthly series of a country by its borders (the `country` column) |
+| `hex/cell_years.parquet` | `build_cell_years.py` | the Overview map over whole years (per cell, country and year), about 2 s for 25 years |
 | `cells/ym=YYYY-MM/*.parquet` | `build_cells.py` | the temperature map and the "Fire cells" CSV (hottest `bright_mir` per cell-day) |
 | `analog_weekly.parquet`, `analog_weekly_country.parquet`, `analog_meta.json` | `build_analog_weekly.py` | the Similar years tab (by box or by country) |
 

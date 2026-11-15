@@ -116,8 +116,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         end: Annotated[str, Query(alias="to", pattern=YM)],
         source: Source = "harmonized",
         day: Annotated[int | None, Query(ge=1, le=31)] = None,
-        limit: Annotated[int, Query(ge=1)] = 60000,
+        limit: Annotated[int, Query(ge=1)] = 150000,
         res: Annotated[int, Query(ge=3, le=7)] = 7,
+        country: Country = None,
     ):
         """Fire map as H3 hexagons for a period: the days (summed over the months) with a detection, added up over the res7 cells
         (~5 km2) inside each hexagon of resolution `res` (3 coarsest .. 7 the data's own cells)."""
@@ -126,7 +127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if day is not None and start != end:
             raise HTTPException(422, "A single day needs from and to to be the same month.")
         sensors = ["modis", "viirs"] if source == "harmonized" else [source]
-        return store.hexes(box, start, end, sensors, day, min(limit, settings.max_hexes), res)
+        return store.hexes(box, start, end, sensors, day, min(limit, settings.max_hexes), res, country)
 
     @app.get("/api/temps", response_model=TempSample, response_model_by_alias=True)
     def temps(

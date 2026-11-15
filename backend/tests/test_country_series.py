@@ -63,3 +63,13 @@ def test_the_monthly_csv_says_which_country_it_is(client):
     r = client.get("/api/export.csv", params={**BOX, "start": "2013-01", "end": "2013-01", "country": "Chad"})
     assert "# aoi_country: Chad" in r.text
     assert "2013-01,,4.0" in r.text
+
+
+def test_the_hex_map_of_a_country_holds_only_its_cells(client):
+    def cells(**extra):
+        r = client.get("/api/hexes", params={**BOX, "from": "2013-01", "to": "2013-01", **extra}).json()
+        return {c["h3"]: c["days"] for c in r["cells"]}
+
+    assert cells() == {A[0]: 3, B[0]: 2, C[0]: 2}
+    assert cells(country="Chad") == {A[0]: 3, C[0]: 1}
+    assert cells(country="Niger") == {B[0]: 2, C[0]: 1}

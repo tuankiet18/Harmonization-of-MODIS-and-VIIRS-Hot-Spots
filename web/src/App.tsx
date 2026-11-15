@@ -170,10 +170,8 @@ export default function App() {
   // The box as text, so the effect below only runs when the requested part really changes (a pan inside the margin keeps it).
   const boxKey = hexBox ? `${hexBox.west}|${hexBox.south}|${hexBox.east}|${hexBox.north}` : '';
   // The map follows the period chosen in the top bar. Only a single day (picked on the Calendar tab) narrows it to its month.
-  // Over more than a year the map shows the month in focus (a year-long map of 25 years is slow and an unreadable blur);
-  // the charts and the calendar keep the whole period.
-  const mapMonthOnly = monthCount(range) > 12;
-  const oneMonth = (day !== null || mapMonthOnly) && !!focus;
+  // The map follows the whole period of the top bar (whole years come from a per-cell-and-year table on the server, so even all 25 years take about a second).
+  const oneMonth = day !== null && !!focus;
   const hexStart = oneMonth && focus ? focus : range.start;
   const hexEnd = oneMonth && focus ? focus : range.end;
   useEffect(() => {
@@ -190,14 +188,14 @@ export default function App() {
       setHexesLoading(false);
     };
     dataSource
-      .hexes(hexBox, { start: hexStart, end: hexEnd }, source, day ?? undefined, { res: 7 })
+      .hexes(hexBox, { start: hexStart, end: hexEnd }, source, day ?? undefined, { res: 7, country: countryData })
       .then(done)
       .catch(() => done(NO_HEXES));
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boxKey, hexStart, hexEnd, source, day, showHexes, synced]);
+  }, [boxKey, hexStart, hexEnd, source, day, showHexes, synced, countryData]);
 
   // The Calendar tab colours the map by temperature: the hottest reading of the picked day, or of the whole month when no day is picked.
   const tempQuery = focus ? (day !== null ? { day: `${focus}-${pad2(day)}` } : { month: focus }) : null;
@@ -312,7 +310,7 @@ export default function App() {
 
   const hexView = useMemo(() => {
     // A country keeps the cells whose centre is inside its borders (the box also holds its neighbours' cells).
-    const cells = country
+    const cells = country && !countryData
       ? hexes.cells.filter((c) => {
           const [lat, lon] = cellToLatLng(c.h3);
           return pointInGeometry(lon, lat, country.geometry);
@@ -321,7 +319,7 @@ export default function App() {
     const items = cells.map((c) => ({ h3: c.h3, value: c.days }));
     const max = items.reduce((m, c) => Math.max(m, c.value), 1);
     return { res: 7, items, steps: hexSteps(max), km2: Math.round(HEX_AREA_KM2[7]).toLocaleString('en-US') };
-  }, [hexes, country]);
+  }, [hexes, country, countryData]);
 
   const tempView = useMemo(() => {
     const cells = country
@@ -357,7 +355,6 @@ export default function App() {
     return topCells(cells, daysInPeriod({ start: hexStart, end: hexEnd }), 10);
   }, [whereRaw, country, hexStart, hexEnd]);
 
-  const monthNote = mapMonthOnly && focus ? ` ${t('mapMonthNote', { month: fmtMonth(focus) })}` : '';
   const captionBase = hexesLoading
     ? t('mapCaptionLoading')
     : hexes.total === 0
@@ -365,7 +362,7 @@ export default function App() {
       : hexes.used < hexes.total
         ? t('mapCaptionSample', { cells: fmt(hexView.items.length), km2: hexView.km2, shown: fmt(hexes.used), n: fmt(hexes.total) })
         : t('mapCaptionAll', { cells: fmt(hexView.items.length), km2: hexView.km2, n: fmt(hexes.total) });
-  const caption = captionBase + monthNote;
+  const caption = captionBase;
 
   const areaProps = {
     regionId,

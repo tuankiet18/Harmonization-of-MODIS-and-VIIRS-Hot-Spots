@@ -50,6 +50,6 @@ export class ApiDataSource implements DataSource {
     return res.text();
   }
   hexes(bbox: Bbox, range: DateRange, source: Source, day?: number, opts: HexOptions = {}): Promise<HexSample> {
-    return this.get('/api/hexes', { ...this.box(bbox), from: range.start, to: range.end, source, day, res: opts.res, limit: opts.limit });
+    return this.get('/api/hexes', { ...this.box(bbox), from: range.start, to: range.end, source, day, res: opts.res, limit: opts.limit, country: opts.country });
   }
 }

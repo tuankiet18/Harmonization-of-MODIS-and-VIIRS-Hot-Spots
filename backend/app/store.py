@@ -67,6 +67,8 @@ class Store:
         # Optional pre-added table (scripts/build_monthly_bins.py): the monthly series of a big area without scanning every hex file.
         bins = data_dir / "hex" / "monthly_bins.parquet"
         self._bins = bins if bins.exists() else None
+        years = data_dir / "hex" / "cell_years.parquet"  # per cell and year (scripts/build_cell_years.py): maps of many years
+        self._cell_years = years if years.exists() else None
         countries = data_dir / "hex" / "monthly_countries.parquet"
         self._countries = countries if countries.exists() else None
         if series_from_hex and self.hex_dir is None:
@@ -318,14 +320,14 @@ class Store:
         )
         return rows, int(total)
 
-    def hexes(self, b: Bbox, start: str, end: str, sensors: list[str], day: int | None, limit: int, res: int = 7) -> dict[str, Any]:
+    def hexes(self, b: Bbox, start: str, end: str, sensors: list[str], day: int | None, limit: int, res: int = 7, country: str | None = None) -> dict[str, Any]:
         """Detections of a period (or one day of a month) grouped into H3 cells of resolution `res`, busiest first, at most `limit`.
 
         A cell's `days` adds up the days with a detection of every res7 cell inside it (cell-days), so no cell-day is lost
         when the cells are merged. `total` is the number of hexagons, `used` how many came back.
         """
         if self.hex_dir is not None:
-            return self._hexes_from_files(b, start, end, sensors, day, limit, res)
+            return self._hexes_from_files(b, start, end, sensors, day, limit, res, country)
         where = "ym BETWEEN ? AND ? AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? AND sensor IN (SELECT UNNEST(?))"
         params: list[Any] = [start, end, *self._box(b), sensors]
         if day is not None:
@@ -346,31 +348,55 @@ class Store:
         )
         return {"cells": [{"h3": r["h3"], "days": r["days"]} for r in rows], "total": int(rows[0]["total"]) if rows else 0, "used": len(rows)}
 
-    def _hexes_from_files(self, b: Bbox, start: str, end: str, sensors: list[str], day: int | None, limit: int, res: int = 7) -> dict[str, Any]:
+    def _hexes_from_files(self, b: Bbox, start: str, end: str, sensors: list[str], day: int | None, limit: int, res: int = 7, country: str | None = None) -> dict[str, Any]:
         dirs = sorted(d for d in self.hex_dir.glob("ym=*") if start <= d.name[3:] <= end and any(d.glob("*.parquet")))  # type: ignore[union-attr]
-        if not dirs:
+        harmonized = set(sensors) == {"modis", "viirs"}  # the combined series: one sensor per month, never both
+        # Whole calendar years of the combined series come from the per-cell-and-year table; the months around them from the month files.
+        full_years: list[int] = []
+        if self._cell_years is not None and day is None and harmonized:
+            full_years = [y for y in range(int(start[:4]), int(end[:4]) + 1) if f"{y}-01" >= start and f"{y}-12" <= end]
+            if len(full_years) < 2:
+                full_years = []
+            dirs = [d for d in dirs if int(d.name[3:7]) not in full_years]
+        if not dirs and not full_years:
             return {"cells": [], "total": 0, "used": 0}
-        files = ", ".join("'" + f.as_posix().replace("'", "''") + "'" for d in dirs for f in sorted(d.glob("*.parquet")))
-        if set(sensors) == {"modis", "viirs"}:  # the harmonized series: one sensor per month, never both
-            sensor_cond = f"((sensor = 'modis' AND ym < '{HARMONIZE_FROM}') OR (sensor = 'viirs' AND ym >= '{HARMONIZE_FROM}'))"
-        else:
-            sensor_cond = "sensor IN (" + ", ".join(f"'{x}'" for x in sensors if x in ("modis", "viirs")) + ")"
-        where = f"center_lat BETWEEN ? AND ? AND center_lon BETWEEN ? AND ? AND {sensor_cond}"
-        params: list[Any] = [*self._box(b)]
-        if day is not None:
-            where += " AND ((days_mask >> ?) & 1) = 1"
-            params.append(day - 1)
-        days_expr = "1" if day is not None else "bit_count(mask)"
+        parts: list[str] = []
+        params: list[Any] = []
+        if dirs:
+            files = ", ".join("'" + f.as_posix().replace("'", "''") + "'" for d in dirs for f in sorted(d.glob("*.parquet")))
+            if harmonized:
+                sensor_cond = f"((sensor = 'modis' AND ym < '{HARMONIZE_FROM}') OR (sensor = 'viirs' AND ym >= '{HARMONIZE_FROM}'))"
+            else:
+                sensor_cond = "sensor IN (" + ", ".join(f"'{x}'" for x in sensors if x in ("modis", "viirs")) + ")"
+            where = f"center_lat BETWEEN ? AND ? AND center_lon BETWEEN ? AND ? AND {sensor_cond}"
+            params += self._box(b)
+            if country:
+                where += " AND country = ?"
+                params.append(country)
+            if day is not None:
+                where += " AND ((days_mask >> ?) & 1) = 1"
+                params.append(day - 1)
+            days_expr = "1" if day is not None else "bit_count(mask)"
+            parts.append(
+                f"""SELECT h3_res7, {days_expr} AS days FROM (
+                        SELECT h3_res7, ym, bit_or(days_mask) AS mask
+                        FROM read_parquet([{files}], hive_partitioning = true, hive_types = {{'ym': 'VARCHAR'}})
+                        WHERE {where}
+                        GROUP BY h3_res7, ym
+                    )"""
+            )
+        if full_years:
+            path = self._cell_years.as_posix().replace("'", "''")  # type: ignore[union-attr]
+            parts.append(
+                f"SELECT h3_res7, days FROM read_parquet('{path}') WHERE year BETWEEN ? AND ? AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?"
+                + (" AND country = ?" if country else "")
+            )
+            params += [min(full_years), max(full_years), *self._box(b), *([country] if country else [])]
         rows = self._rows(
             f"""
-            WITH m AS (
-                SELECT h3_res7, ym, bit_or(days_mask) AS mask
-                FROM read_parquet([{files}], hive_partitioning = true, hive_types = {{'ym': 'VARCHAR'}})
-                WHERE {where}
-                GROUP BY h3_res7, ym
-            )
-            SELECT {parent_cell('h3_res7', res)} AS h3, CAST(SUM({days_expr}) AS INTEGER) AS days, COUNT(*) OVER () AS total
-            FROM m
+            WITH u AS ({" UNION ALL ".join(parts)})
+            SELECT {parent_cell('h3_res7', res)} AS h3, CAST(SUM(days) AS INTEGER) AS days, COUNT(*) OVER () AS total
+            FROM u
             GROUP BY 1
             ORDER BY days DESC, h3
             LIMIT ?

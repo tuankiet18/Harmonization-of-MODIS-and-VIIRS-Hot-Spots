@@ -6,6 +6,7 @@
 
     <out>/hex/ym=YYYY-MM/*.parquet   per-month hexagon files   (build_hex_months.py)  the map, the monthly and daily series
     <out>/hex/monthly_bins.parquet   pre-added monthly table    (build_monthly_bins.py) the monthly series of big areas in milliseconds
+    <out>/hex/cell_years.parquet     per cell and year          (build_cell_years.py)   the Overview map over whole years
     <out>/cells/ym=YYYY-MM/*.parquet slim cell-day table        (build_cells.py)       the temperature map and the cells CSV
     <out>/analog_weekly.parquet      weekly table + analog_meta.json (build_analog_weekly.py)  the Similar years tab
 
@@ -22,11 +23,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from build_analog_weekly import build_real  # noqa: E402
+from build_cell_years import build_cell_years  # noqa: E402
 from build_cells import build_cells  # noqa: E402
 from build_hex_months import build_hex_months  # noqa: E402
 from build_monthly_bins import build_monthly_bins  # noqa: E402
 
-STEPS = ("hex", "bins", "cells", "analog")
+STEPS = ("hex", "bins", "years", "cells", "analog")
 
 
 def year_files(src: Path, years: list[int] | None) -> list[Path]:
@@ -52,6 +54,8 @@ def build_all(src: Path, out: Path, steps: tuple[str, ...] = STEPS, years: list[
         step("hex", lambda: [build_hex_months(f.as_posix(), out / "hex") for f in files])
     if "bins" in steps:
         step("bins", lambda: print(f"  {build_monthly_bins(out / 'hex')} rows"))
+    if "years" in steps:
+        step("years", lambda: print(f"  {build_cell_years(out / 'hex')} rows"))
     if "cells" in steps:
         step("cells", lambda: [build_cells(f.as_posix(), out / "cells") for f in files])
     if "analog" in steps:

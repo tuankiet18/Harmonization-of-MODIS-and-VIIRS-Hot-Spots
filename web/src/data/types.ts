@@ -78,6 +78,8 @@ export interface HexOptions {
   res?: number;
   /** At most this many hexagons, busiest first. */
   limit?: number;
+  /** The country's name in the data: only its cells (by the data's own country column) instead of everything in the box. */
+  country?: string;
 }
 
 /** One res7 cell on the temperature map: the hottest mid-infrared brightness temperature (bright_mir) seen in it. */
