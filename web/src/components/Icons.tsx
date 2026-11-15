@@ -38,6 +38,12 @@ export const IconCalendar = () => (
     <path d="M4 10h16M9 3v4M15 3v4" />
   </Svg>
 );
+export const IconAnalog = () => (
+  <Svg>
+    <path d="M3 17c3-9 6-9 9 0s6 0 9-9" />
+    <path d="M3 21h18" strokeDasharray="2 3" />
+  </Svg>
+);
 export const IconNext = () => (
   <Svg>
     <path d="M9 5l7 7-7 7" />

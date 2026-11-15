@@ -281,3 +281,28 @@ export function topCells(cells: HexCell[], periodDays: number, n: number): TopCe
       return { h3: c.h3, days: c.days, share, lat, lon, persistent: periodDays >= 30 && share >= 0.6 };
     });
 }
+
+export interface MonthVsUsual {
+  yearMonth: string;
+  value: number;
+  /** Median and p10..p90 of the same calendar month in the other years; null when there is no other year. */
+  median: number | null;
+  p10: number | null;
+  p90: number | null;
+}
+
+/** Each month of a (short) period with the range its own calendar month usually has, to read them against each other. */
+export function monthsVsUsual(period: MonthlyPoint[], all: MonthlyPoint[], source: Source): MonthVsUsual[] {
+  const out: MonthVsUsual[] = [];
+  for (const p of period) {
+    const value = valueOf(p, source);
+    if (value === null) continue;
+    const others = all
+      .filter((q) => q.month === p.month && q.year !== p.year)
+      .map((q) => valueOf(q, source))
+      .filter((v): v is number => v !== null)
+      .sort((a, b) => a - b);
+    out.push({ yearMonth: p.yearMonth, value, median: quantile(others, 0.5), p10: quantile(others, 0.1), p90: quantile(others, 0.9) });
+  }
+  return out;
+}

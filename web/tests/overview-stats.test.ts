@@ -147,3 +147,27 @@ describe('topCells', () => {
     expect(topCells([{ h3: a, days: 20 }], 20, 1)[0].persistent).toBe(false);
   });
 });
+
+import { monthsVsUsual } from '../src/lib/stats';
+
+describe('monthsVsUsual', () => {
+  const hist = [pt('2017-01', 10), pt('2018-01', 20), pt('2019-01', 30), pt('2020-01', 40), pt('2017-02', 5), pt('2018-02', 5)];
+
+  it('gives each month of the period with the usual range of the same month in the other years', () => {
+    const r = monthsVsUsual([pt('2020-01', 40)], hist, 'harmonized');
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ yearMonth: '2020-01', value: 40, median: 20 });
+    expect(r[0].p10).toBeCloseTo(12);
+    expect(r[0].p90).toBeCloseTo(28);
+  });
+  it('keeps the months in order and leaves the usual empty when there is no other year', () => {
+    const r = monthsVsUsual([pt('2020-01', 40), pt('2020-03', 7)], hist, 'harmonized');
+    expect(r.map((m) => m.yearMonth)).toEqual(['2020-01', '2020-03']);
+    expect(r[1]).toMatchObject({ value: 7, median: null, p10: null, p90: null });
+  });
+  it('skips months without a value and ignores other years that have none for that month', () => {
+    const r = monthsVsUsual([pt('2020-01', 40), pt('2020-02', null)], [...hist, pt('2016-01', null)], 'harmonized');
+    expect(r.map((m) => m.yearMonth)).toEqual(['2020-01']);
+    expect(r[0].median).toBe(20);
+  });
+});

@@ -35,6 +35,29 @@ export default function FireCalendar({ inRange, all, source, mode, focus, onSele
     const sorted = [...counts].sort((a, b) => a - b);
     const p98 = Math.max(1, Math.round(sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.98))] : 1));
 
+    // The selected month, drawn on top of the heatmap: a white halo under a dark ring, so it shows on pale and dark squares alike.
+    const picked = inRange.find((p) => p.yearMonth === focus && valueOf(p, source) !== null);
+    const marker = picked
+      ? {
+          type: 'custom' as const,
+          silent: true,
+          z: 10,
+          data: [[picked.month - 1, yIndex.get(picked.year)!]],
+          renderItem: (_: unknown, api: { coord: (v: number[]) => number[]; size: (v: number[]) => number[]; value: (i: number) => number }) => {
+            const [x, y] = api.coord([api.value(0), api.value(1)]);
+            const [w, h] = api.size([1, 1]);
+            const shape = { x: x - w / 2 + 1.5, y: y - h / 2 + 1.5, width: w - 3, height: h - 3, r: 3 };
+            return {
+              type: 'group',
+              children: [
+                { type: 'rect', shape, style: { fill: 'none', stroke: '#ffffff', lineWidth: 7 } },
+                { type: 'rect', shape, style: { fill: 'none', stroke: COLORS.ink, lineWidth: 3.5 } },
+              ],
+            };
+          },
+        }
+      : null;
+
     const data = inRange.flatMap((p) => {
       const count = valueOf(p, source);
       if (count === null) return [];
@@ -42,19 +65,14 @@ export default function FireCalendar({ inRange, all, source, mode, focus, onSele
       const anom = anomalyPct(count, med);
       const shown = mode === 'count' ? count : anom;
       if (shown === null) return [];
-      const itemStyle =
-        p.yearMonth === focus
-          ? { borderColor: COLORS.ink, borderWidth: 3 }
-          : p.anyNrt
-            ? { borderColor: COLORS.ink, borderWidth: 1.5, borderType: 'dashed' as const }
-            : undefined;
+      const itemStyle = p.anyNrt && p.yearMonth !== focus ? { borderColor: COLORS.ink, borderWidth: 1.5, borderType: 'dashed' as const } : undefined;
       return [{ value: [p.month - 1, yIndex.get(p.year)!, shown, count, med, anom, p.yearMonth, p.anyNrt ? 1 : 0], itemStyle }];
     });
 
     const visualMap =
       mode === 'count'
-        ? { type: 'continuous' as const, dimension: 2, min: 0, max: p98, show: false, inRange: { color: BURN }, outOfRange: { color: BURN[BURN.length - 1] } }
-        : { type: 'piecewise' as const, dimension: 2, show: false, pieces: ANOMALY_PIECES };
+        ? { type: 'continuous' as const, seriesIndex: 0, dimension: 2, min: 0, max: p98, show: false, inRange: { color: BURN }, outOfRange: { color: BURN[BURN.length - 1] } }
+        : { type: 'piecewise' as const, seriesIndex: 0, dimension: 2, show: false, pieces: ANOMALY_PIECES };
 
     const opt: EChartsCoreOption = {
       backgroundColor: 'transparent',
@@ -112,6 +130,7 @@ export default function FireCalendar({ inRange, all, source, mode, focus, onSele
           itemStyle: { borderColor: COLORS.surface, borderWidth: 1.5, borderRadius: 2 },
           emphasis: { itemStyle: { borderColor: COLORS.ink, borderWidth: 2 } },
         },
+        ...(marker ? [marker] : []),
       ],
     };
     const old = [...modisScaledYears].sort((a, b) => a - b);
@@ -151,7 +170,7 @@ export default function FireCalendar({ inRange, all, source, mode, focus, onSele
         )}
         <ul className="flex flex-wrap gap-x-4 gap-y-1.5">
           <li className="flex items-center gap-1.5">
-            <i className="size-3.5 rounded-sm border-[3px] border-ink" />
+            <i className="size-3.5 rounded-sm border-[3px] border-ink shadow-[0_0_0_2px_#fff]" />
             {t('legendSelected')}
           </li>
           <li className="flex items-center gap-1.5">

@@ -49,3 +49,14 @@ describe('nearestMonth', () => {
     expect(nearestMonth([], '2020-02')).toBeNull();
   });
 });
+
+import { monthCount } from '../src/lib/months';
+
+describe('monthCount', () => {
+  it('counts the months of a period, both ends included', () => {
+    expect(monthCount({ start: '2014-10', end: '2014-12' })).toBe(3);
+    expect(monthCount({ start: '2014-12', end: '2014-12' })).toBe(1);
+    expect(monthCount({ start: '2013-11', end: '2014-02' })).toBe(4);
+    expect(monthCount({ start: '2000-11', end: '2014-12' })).toBe(170);
+  });
+});

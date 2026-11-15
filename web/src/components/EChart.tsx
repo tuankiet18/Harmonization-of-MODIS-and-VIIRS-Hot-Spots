@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts/core';
-import { BarChart, HeatmapChart, LineChart } from 'echarts/charts';
+import { BarChart, CustomChart, HeatmapChart, LineChart } from 'echarts/charts';
 import {
   DataZoomComponent,
   GridComponent,
@@ -15,6 +15,7 @@ import type { EChartsCoreOption } from 'echarts/core';
 
 echarts.use([
   BarChart,
+  CustomChart,
   HeatmapChart,
   LineChart,
   GridComponent,

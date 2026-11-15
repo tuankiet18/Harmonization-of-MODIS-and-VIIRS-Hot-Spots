@@ -27,6 +27,16 @@ function unwrap(ring: Ring): Ring {
   return out;
 }
 
+/**
+ * The same country with every ring made continuous across the date line (longitudes may then pass 180), so a map draws Russia's
+ * Chukotka or Fiji as one piece instead of a line straight across the world.
+ */
+export function unwrapGeometry(g: CountryGeometry): CountryGeometry {
+  return g.type === 'Polygon'
+    ? { type: 'Polygon', coordinates: g.coordinates.map(unwrap) }
+    : { type: 'MultiPolygon', coordinates: g.coordinates.map((p) => p.map(unwrap)) };
+}
+
 const boxOf = (ring: Ring): Bbox => {
   let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
   for (const [x, y] of ring) {

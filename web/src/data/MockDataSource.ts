@@ -1,7 +1,8 @@
 import { latLngToCell } from 'h3-js';
 import { aggregateMonthly } from '../lib/aggregate';
+import { aggregateCells } from '../lib/hex';
 import { REGIONS } from './regions';
-import type { Bbox, DataMeta, DataSource, DateRange, DayPoint, HexSample, HotspotPoint, HotspotSample, MonthRecord, MonthlyPoint, Source } from './types';
+import type { Bbox, DataMeta, DataSource, DateRange, DayPoint, HexOptions, HexSample, HotspotPoint, HotspotSample, MonthRecord, MonthlyPoint, Source, TempQuery, TempSample } from './types';
 
 /**
  * Synthetic data with the same shape as the real harmonized dataset.
@@ -238,7 +239,23 @@ export class MockDataSource implements DataSource {
    * The fire map as H3 res7 hexagons, built from the same synthetic detections as points(). A long period would mean
    * thousands of synthetic months, so at most 12 evenly spaced ones are drawn and their days scaled up to stand in for the rest.
    */
-  async hexes(bbox: Bbox, range: DateRange, source: Source, day?: number): Promise<HexSample> {
+  /** Demo temperatures: a fixed pseudo value per cell (the real ones come from the backend). */
+  async temps(bbox: Bbox, query: TempQuery, source: Source): Promise<TempSample> {
+    const ym = 'day' in query ? query.day.slice(0, 7) : query.month;
+    const day = 'day' in query ? Number(query.day.slice(8)) : undefined;
+    const { points } = await this.points(bbox, ym, source, day);
+    const hottest = new Map<string, { tempC: number; n: number }>();
+    for (const p of points) {
+      const id = latLngToCell(p.lat, p.lon, 7);
+      const tempC = 50 + ((Math.round((p.lat + 90) * 97 + (p.lon + 180) * 53 + p.day * 31) % 40) + 40) % 40;
+      const prev = hottest.get(id);
+      hottest.set(id, { tempC: Math.max(prev?.tempC ?? 0, tempC), n: (prev?.n ?? 0) + 1 });
+    }
+    const cells = [...hottest].map(([h3, v]) => ({ h3, ...v })).sort((a, b) => b.tempC - a.tempC || (a.h3 < b.h3 ? -1 : 1));
+    return { cells, total: cells.length, used: cells.length, metric: 'bright_mir' };
+  }
+
+  async hexes(bbox: Bbox, range: DateRange, source: Source, day?: number, opts: HexOptions = {}): Promise<HexSample> {
     const months = monthsBetween(range.start, range.end);
     const sample = day !== undefined ? [range.start] : evenly(months, 12);
     const days = new Map<string, number>();
@@ -254,10 +271,13 @@ export class MockDataSource implements DataSource {
       for (const [id, set] of inMonth) days.set(id, (days.get(id) ?? 0) + set.size);
     }
     const scale = day !== undefined ? 1 : months.length / sample.length;
-    const cells = [...days]
+    let cells = [...days]
       .map(([h3, d]) => ({ h3, days: Math.max(1, Math.round(d * scale)) }))
       .sort((a, b) => b.days - a.days || (a.h3 < b.h3 ? -1 : 1));
-    return { cells, total: cells.length, used: cells.length };
+    if (opts.res !== undefined && opts.res < 7) cells = aggregateCells(cells, opts.res).map((c) => ({ h3: c.h3, days: c.value }));
+    const total = cells.length;
+    if (opts.limit !== undefined) cells = cells.slice(0, opts.limit);
+    return { cells, total, used: cells.length };
   }
 }
 

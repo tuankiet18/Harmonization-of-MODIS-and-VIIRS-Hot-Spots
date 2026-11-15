@@ -1,4 +1,5 @@
 import { useI18n } from '../i18n';
+import { monthCount } from '../lib/months';
 import { verdictOf, type Kpis, type PeriodAnomaly, type Verdict } from '../lib/stats';
 import type { DateRange } from '../data/types';
 
@@ -28,27 +29,33 @@ function Fact({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
-/** The answer first: the whole period against the usual, then three facts about it. */
+/** Past this many months every year is compared with the others and the comparison cancels out, so only a description is given. */
+const VERDICT_MAX_MONTHS = 24;
+
+/** The answer first: the whole period against the usual (for a short one), then three facts about it. */
 export default function Summary({ period, anomaly, range, place }: Props) {
   const { t, months, fmt, fmtCompact, fmtMonth } = useI18n();
-  const verdict = verdictOf(anomaly.pct);
+  const long = monthCount(period) > VERDICT_MAX_MONTHS;
+  const verdict = long ? 'unknown' : verdictOf(anomaly.pct);
   const v = VERDICT[verdict];
   const label =
     period.start === period.end
       ? fmtMonth(period.start)
       : t('periodSpan', { from: `${months[Number(period.start.slice(5)) - 1]} ${period.start.slice(0, 4)}`, to: `${months[Number(period.end.slice(5)) - 1]} ${period.end.slice(0, 4)}` });
   const vars = { period: label, place, pct: anomaly.pct === null ? '' : fmt(Math.abs(anomaly.pct)), n: fmt(anomaly.total) };
-  const headline = verdict === 'unknown' ? t('headNoBase', vars) : verdict === 'typical' ? t('headNear', vars) : verdict === 'higher' ? t('headMore', vars) : t('headFewer', vars);
+  const headline = long ? t('headLong', vars) : verdict === 'unknown' ? t('headNoBase', vars) : verdict === 'typical' ? t('headNear', vars) : verdict === 'higher' ? t('headMore', vars) : t('headFewer', vars);
   const busiest = range.busiest;
 
   return (
     <section className="py-6" aria-live="polite">
-      <p className={`mb-3 inline-flex items-center gap-2 rounded-full border px-3 py-0.5 text-sm font-semibold ${v.pill}`}>
-        <span aria-hidden="true">{v.glyph}</span>
-        {t(v.label)}
-      </p>
+      {!long && (
+        <p className={`mb-3 inline-flex items-center gap-2 rounded-full border px-3 py-0.5 text-sm font-semibold ${v.pill}`}>
+          <span aria-hidden="true">{v.glyph}</span>
+          {t(v.label)}
+        </p>
+      )}
       <h2 className={`border-l-4 pl-4 font-display text-[clamp(28px,2.4vw,40px)] font-semibold leading-[1.08] ${v.border}`}>{headline}</h2>
-      {anomaly.pct !== null && <p className="mt-3 max-w-[62ch]">{t('headSub', { expected: fmt(Math.round(anomaly.expected)), compared: fmt(anomaly.compared) })}</p>}
+      {!long && anomaly.pct !== null && <p className="mt-3 max-w-[62ch]">{t('headSub', { expected: fmt(Math.round(anomaly.expected)), compared: fmt(anomaly.compared) })}</p>}
       <dl className="mt-5 grid gap-3 sm:grid-cols-3">
         <Fact
           label={t('factBusiest')}

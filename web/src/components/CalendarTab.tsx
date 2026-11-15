@@ -1,10 +1,9 @@
 import { useI18n } from '../i18n';
 import type { DataMeta, DayPoint, MonthlyPoint, Source } from '../data/types';
 import DailyCalendar from './DailyCalendar';
-import ExplainPanel from './ExplainPanel';
+import DataPanel from './DataPanel';
 import FireCalendar, { type CalendarMode } from './FireCalendar';
 import Segmented from './Segmented';
-import { btn } from './ui';
 
 interface Props {
   point: MonthlyPoint;
@@ -20,11 +19,13 @@ interface Props {
   daily: DayPoint[];
   day: number | null;
   onPickDay: (day: number | null) => void;
-  onShowOnMap: () => void;
+  onDownloadMonthly: () => void;
+  onDownloadDaily: () => void;
+  onDownloadCells?: () => Promise<void>;
 }
 
 /** The detail view: the month-by-year calendar, the days of one month, and how the numbers were made. */
-export default function CalendarTab({ point, inRange, all, source, onSource, mode, onMode, meta, focus, onSelect, daily, day, onPickDay, onShowOnMap }: Props) {
+export default function CalendarTab({ point, inRange, all, source, onSource, mode, onMode, meta, focus, onSelect, daily, day, onPickDay, onDownloadMonthly, onDownloadDaily, onDownloadCells }: Props) {
   const { t } = useI18n();
   return (
     <>
@@ -48,14 +49,6 @@ export default function CalendarTab({ point, inRange, all, source, onSource, mod
       </section>
 
       {daily.length > 0 && <DailyCalendar yearMonth={point.yearMonth} days={daily} source={source} day={day} onPick={onPickDay} />}
-      {day !== null && (
-        <div className="pb-4">
-          <button type="button" className={btn} onClick={onShowOnMap}>
-            {t('showOnMap')}
-          </button>
-        </div>
-      )}
-
       <section className="border-t border-line py-6" aria-labelledby="how-h">
         <h2 id="how-h" className="text-lg font-semibold">
           {t('detailsTitle')}
@@ -74,7 +67,7 @@ export default function CalendarTab({ point, inRange, all, source, onSource, mod
             ]}
           />
         </div>
-        <ExplainPanel point={point} source={source} meta={meta} />
+        <DataPanel meta={meta} all={all} focus={focus} onMonthly={onDownloadMonthly} onDaily={onDownloadDaily} onCells={onDownloadCells} />
       </section>
     </>
   );

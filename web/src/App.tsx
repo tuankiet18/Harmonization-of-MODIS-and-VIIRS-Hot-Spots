@@ -1,6 +1,8 @@
 import { cellToLatLng } from 'h3-js';
 import { useEffect, useMemo, useState } from 'react';
+import AnalogTab from './components/AnalogTab';
 import AnnualChart from './components/AnnualChart';
+import MonthCompareChart from './components/MonthCompareChart';
 import AnomalyChart from './components/AnomalyChart';
 import CalendarTab from './components/CalendarTab';
 import ChartCard from './components/ChartCard';
@@ -18,26 +20,28 @@ import TrendChart from './components/TrendChart';
 import { btn } from './components/ui';
 import { dataSource } from './data';
 import { REGIONS } from './data/regions';
-import type { Bbox, DataMeta, DateRange, DayPoint, HexSample, MonthlyPoint, Source } from './data/types';
+import type { Bbox, DataMeta, DateRange, DayPoint, HexCell, HexSample, MonthlyPoint, Source, TempSample } from './data/types';
 import { useI18n } from './i18n';
 import { valueOf } from './lib/aggregate';
-import { buildCsv, downloadText } from './lib/csv';
+import { buildCsv, buildDailyCsv, downloadText } from './lib/csv';
 import { loadCountries, type Country } from './lib/countries';
 import { pointInGeometry } from './lib/geo';
-import { aggregateCells, HEX_AREA_KM2, hexResolution, hexResolutionForZoom, hexSteps } from './lib/hex';
-import { nearestMonth } from './lib/months';
-import { anomalySeries, computeKpis, daysInPeriod, periodAnomaly, seasonalProfile, seasonProgress, topCells } from './lib/stats';
+import { HEX_AREA_KM2, TEMP_STEPS, hexSteps, viewportBox, type HexStep, type HexValue } from './lib/hex';
+import { monthCount, nearestMonth } from './lib/months';
+import { anomalySeries, computeKpis, daysInPeriod, monthsVsUsual, periodAnomaly, seasonalProfile, seasonProgress, topCells } from './lib/stats';
 import { DEFAULT_TAB, isTab, TABS } from './tabs';
 import { decodeState, encodeState } from './lib/urlState';
 
 const NO_HEXES: HexSample = { cells: [], total: 0, used: 0 };
+const NO_TEMPS: TempSample = { cells: [], total: 0, used: 0, metric: 'bright_mir' };
+const pad2 = (n: number) => String(n).padStart(2, '0');
 const PRESET_BOXES = Object.fromEntries(REGIONS.map((r) => [r.id, r.bbox]));
 // Only the area, series and month are read before the data limits are known; the range is read after.
 const WIDE = { min: '0000-01', max: '9999-12' };
 const fromUrl = () => decodeState(window.location.search, PRESET_BOXES, WIDE);
 
 export default function App() {
-  const { t, fmt } = useI18n();
+  const { t, fmt, fmtMonth } = useI18n();
   const [meta, setMeta] = useState<DataMeta | null>(null);
   const initial = useMemo(fromUrl, []);
   const [source, setSource] = useState<Source>(initial.source ?? 'harmonized');
@@ -49,7 +53,7 @@ export default function App() {
   // A shared country link has no box until the borders have loaded.
   const [bbox, setBbox] = useState<Bbox | null>(initial.regionId === 'country' ? null : initial.bbox !== undefined ? initial.bbox : REGIONS[0].bbox);
   // Zoom and latitude of the map once it settles; hexagon size follows it.
-  const [view, setView] = useState<{ zoom: number; lat: number } | null>(null);
+  const [view, setView] = useState<{ zoom: number; lat: number; bounds: Bbox } | null>(null);
   const [countries, setCountries] = useState<Country[]>([]);
   const [country, setCountry] = useState<Country | null>(null);
   const [fitSignal, setFitSignal] = useState(0);
@@ -67,6 +71,8 @@ export default function App() {
   // On by default: the hexagons are the point of the map, so they should not hide behind a folded section.
   const [showHexes, setShowHexes] = useState(true);
   const [hexesLoading, setHexesLoading] = useState(true);
+  const [temps, setTemps] = useState<TempSample>(NO_TEMPS);
+  const [tempsLoading, setTempsLoading] = useState(false);
 
   useEffect(() => {
     dataSource.meta().then((m) => {
@@ -155,11 +161,19 @@ export default function App() {
     };
   }, [bbox, focus, loading]);
 
+  // The map always shows the data's own res7 cells, but only those in view (plus a margin): panning asks for the next part.
+  const hexBox = useMemo(() => (bbox ? viewportBox(bbox, view ? view.bounds : null) : null), [bbox, view]);
+  // The box as text, so the effect below only runs when the requested part really changes (a pan inside the margin keeps it).
+  const boxKey = hexBox ? `${hexBox.west}|${hexBox.south}|${hexBox.east}|${hexBox.north}` : '';
   // The map follows the period chosen in the top bar. Only a single day (picked on the Calendar tab) narrows it to its month.
-  const hexStart = day !== null && focus ? focus : range.start;
-  const hexEnd = day !== null && focus ? focus : range.end;
+  // Over more than a year the map shows the month in focus (a year-long map of 25 years is slow and an unreadable blur);
+  // the charts and the calendar keep the whole period.
+  const mapMonthOnly = monthCount(range) > 12;
+  const oneMonth = (day !== null || mapMonthOnly) && !!focus;
+  const hexStart = oneMonth && focus ? focus : range.start;
+  const hexEnd = oneMonth && focus ? focus : range.end;
   useEffect(() => {
-    if (!showHexes || !bbox || !synced) {
+    if (!showHexes || !hexBox || !synced) {
       setHexes(NO_HEXES);
       setHexesLoading(false);
       return;
@@ -172,13 +186,54 @@ export default function App() {
       setHexesLoading(false);
     };
     dataSource
-      .hexes(bbox, { start: hexStart, end: hexEnd }, source, day ?? undefined)
+      .hexes(hexBox, { start: hexStart, end: hexEnd }, source, day ?? undefined, { res: 7 })
       .then(done)
       .catch(() => done(NO_HEXES));
     return () => {
       cancelled = true;
     };
-  }, [bbox, hexStart, hexEnd, source, day, showHexes, synced]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boxKey, hexStart, hexEnd, source, day, showHexes, synced]);
+
+  // The Calendar tab colours the map by temperature: the hottest reading of the picked day, or of the whole month when no day is picked.
+  const tempQuery = focus ? (day !== null ? { day: `${focus}-${pad2(day)}` } : { month: focus }) : null;
+  const tempKey = tempQuery ? ('day' in tempQuery ? tempQuery.day : tempQuery.month) : '';
+  useEffect(() => {
+    if (tab !== 'calendar' || !hexBox || !synced || !tempQuery || !showHexes || !dataSource.temps) {
+      setTemps(NO_TEMPS);
+      setTempsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setTempsLoading(true);
+    const done = (s: TempSample) => {
+      if (cancelled) return;
+      setTemps(s);
+      setTempsLoading(false);
+    };
+    dataSource
+      .temps(hexBox, tempQuery, source)
+      .then(done)
+      .catch(() => done(NO_TEMPS));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, boxKey, tempKey, source, showHexes, synced]);
+
+  // The busiest-cells list needs the cells themselves (res7), a few hundred of the busiest is plenty to pick ten from.
+  const [whereRaw, setWhereRaw] = useState<HexCell[]>([]);
+  useEffect(() => {
+    if (group !== 'where' || !bbox || !synced) return;
+    let cancelled = false;
+    dataSource
+      .hexes(bbox, { start: hexStart, end: hexEnd }, source, day ?? undefined, { res: 7, limit: 300 })
+      .then((h) => !cancelled && setWhereRaw(h.cells))
+      .catch(() => !cancelled && setWhereRaw([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [group, bbox, hexStart, hexEnd, source, day, synced]);
 
   const region = REGIONS.find((r) => r.id === regionId);
   const place = country ? country.name : (region && (region.enInSentence ?? region.name)) || t('placeCustom');
@@ -238,34 +293,74 @@ export default function App() {
     downloadText(`firecalendar_${source}_${range.start}_${range.end}.csv`, buildCsv(inRange, meta, bbox, range, source));
   };
 
-  // The map draws bigger hexagons for bigger areas; their value is the res7 cell-days inside them.
-  const hexRes = view ? hexResolutionForZoom(view.zoom, view.lat) : hexResolution(bbox);
+  const exportDaily = () => {
+    if (!meta || !bbox || !focus) return;
+    downloadText(`firecalendar_daily_${source}_${focus}.csv`, buildDailyCsv(daily, focus, meta, bbox, source));
+  };
+  // Every cell-day of the month in focus, read on demand (a few thousand to a few hundred thousand rows).
+  const exportCells = dataSource.cellsCsv
+    ? async () => {
+        if (!bbox || !focus || !dataSource.cellsCsv) return;
+        downloadText(`firecalendar_cells_${source}_${focus}.csv`, await dataSource.cellsCsv(bbox, focus, source));
+      }
+    : undefined;
+
   const hexView = useMemo(() => {
-    const res = hexRes;
-    // A country keeps only the cells whose centre is inside its borders (the box also holds its neighbours' cells).
+    // A country keeps the cells whose centre is inside its borders (the box also holds its neighbours' cells).
     const cells = country
       ? hexes.cells.filter((c) => {
           const [lat, lon] = cellToLatLng(c.h3);
           return pointInGeometry(lon, lat, country.geometry);
         })
       : hexes.cells;
-    const items = aggregateCells(cells, res);
-    return { res, items, cells, steps: hexSteps(items[0]?.value ?? 1), km2: Math.round(HEX_AREA_KM2[res]).toLocaleString('en-US') };
-  }, [hexes, hexRes, country]);
+    const items = cells.map((c) => ({ h3: c.h3, value: c.days }));
+    const max = items.reduce((m, c) => Math.max(m, c.value), 1);
+    return { res: 7, items, steps: hexSteps(max), km2: Math.round(HEX_AREA_KM2[7]).toLocaleString('en-US') };
+  }, [hexes, country]);
+
+  const tempView = useMemo(() => {
+    const cells = country
+      ? temps.cells.filter((c) => {
+          const [lat, lon] = cellToLatLng(c.h3);
+          return pointInGeometry(lon, lat, country.geometry);
+        })
+      : temps.cells;
+    return cells.map((c) => ({ h3: c.h3, value: c.tempC, n: c.n }));
+  }, [temps, country]);
+  const tempWhen = focus ? (day !== null ? `${day} ${fmtMonth(focus)}` : fmtMonth(focus)) : '';
+  const tempCaption = tempsLoading
+    ? t('tempLoading')
+    : !dataSource.temps
+      ? t('tempUnavailable')
+      : tempView.length === 0
+        ? t('tempNone', { when: day !== null ? `on ${tempWhen}` : `in ${tempWhen}` })
+        : t('tempCaption', { when: tempWhen, cells: fmt(tempView.length) });
 
   const focusYear = focusPoint?.year ?? null;
+  const shortPeriod = monthCount(range) <= 12;
+  const monthRows = useMemo(() => monthsVsUsual(inRange, all, source), [inRange, all, source]);
   const anomalies = useMemo(() => anomalySeries(inRange, all, source), [inRange, all, source]);
   const seasonal = useMemo(() => seasonalProfile(all, source, focusYear), [all, source, focusYear]);
   const progress = useMemo(() => seasonProgress(all, source, focusYear), [all, source, focusYear]);
-  const busiestCells = useMemo(() => topCells(hexView.cells, daysInPeriod({ start: hexStart, end: hexEnd }), 10), [hexView.cells, hexStart, hexEnd]);
+  const busiestCells = useMemo(() => {
+    const cells = country
+      ? whereRaw.filter((c) => {
+          const [lat, lon] = cellToLatLng(c.h3);
+          return pointInGeometry(lon, lat, country.geometry);
+        })
+      : whereRaw;
+    return topCells(cells, daysInPeriod({ start: hexStart, end: hexEnd }), 10);
+  }, [whereRaw, country, hexStart, hexEnd]);
 
-  const caption = hexesLoading
+  const monthNote = mapMonthOnly && focus ? ` ${t('mapMonthNote', { month: fmtMonth(focus) })}` : '';
+  const captionBase = hexesLoading
     ? t('mapCaptionLoading')
     : hexes.total === 0
       ? t('mapCaptionNone')
       : hexes.used < hexes.total
         ? t('mapCaptionSample', { cells: fmt(hexView.items.length), km2: hexView.km2, shown: fmt(hexes.used), n: fmt(hexes.total) })
         : t('mapCaptionAll', { cells: fmt(hexView.items.length), km2: hexView.km2, n: fmt(hexes.total) });
+  const caption = captionBase + monthNote;
 
   const areaProps = {
     regionId,
@@ -316,6 +411,20 @@ export default function App() {
 
   const footer = <p className="border-t border-line pb-6 pt-4 text-sm text-muted">{t('footer')}</p>;
 
+  // The map beside the results: the Overview colours it by days with fire, the Calendar by temperature.
+  const mapArea = (p: { cells: HexValue[]; steps: HexStep[]; kind: 'days' | 'tempC'; sparse?: boolean; legend: 'period' | 'day' | 'tempDay' | 'tempMonth'; caption: string; empty: boolean }) => (
+    <div className="relative h-[46vh] min-h-72 lg:h-auto lg:min-h-0">
+      <MapPanel bbox={bbox} fitSignal={fitSignal} drawing={drawing} onDrawn={drawn} cells={showHexes ? p.cells : []} outline={country ? country.geometry : null} onView={setView} flyTo={flyTo} steps={p.steps} valueKind={p.kind} sparse={p.sparse} onPickRegion={pickRegion} />
+      {showHexes && bbox && p.empty && (
+        <p className="pointer-events-none absolute bottom-10 right-3 z-10 max-w-64 rounded-lg bg-surface/95 px-3 py-2 text-sm shadow-sm" role="status">
+          {t('mapCaptionNone')}
+        </p>
+      )}
+      <MapLegend hasArea={!!bbox} hexMode={showHexes && p.cells.length > 0 ? p.legend : null} steps={p.steps} caption={p.caption} />
+      <MapControls bbox={bbox} drawing={drawing} onBbox={applyBbox} onDrawToggle={() => setDrawing((d) => !d)} onClear={clear} showHexes={showHexes} onShowHexes={setShowHexes} />
+    </div>
+  );
+
   return (
     <div className="flex min-h-full flex-col lg:h-dvh">
       <Toolbar {...areaProps} range={range} limits={limits} onRange={setRange} canDownload={hasData} onDownload={exportCsv} isMock={!!meta?.isMock} />
@@ -326,16 +435,7 @@ export default function App() {
         <main className="min-h-0 min-w-0 flex-1">
           {tab === 'overview' && (
             <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" className="grid h-full lg:grid-cols-[minmax(0,1.1fr)_minmax(420px,1fr)] lg:grid-rows-[minmax(0,1fr)]">
-              <div className="relative h-[46vh] min-h-72 lg:h-auto lg:min-h-0">
-                <MapPanel bbox={bbox} fitSignal={fitSignal} drawing={drawing} onDrawn={drawn} cells={showHexes ? hexView.items : []} outline={country ? country.geometry : null} onView={setView} flyTo={flyTo} steps={hexView.steps} res={hexView.res} onPickRegion={pickRegion} />
-                {showHexes && bbox && !loading && !hexesLoading && hexes.total === 0 && (
-                  <p className="pointer-events-none absolute bottom-10 right-3 z-10 max-w-64 rounded-lg bg-surface/95 px-3 py-2 text-sm shadow-sm" role="status">
-                    {t('mapCaptionNone')}
-                  </p>
-                )}
-                <MapLegend hasArea={!!bbox} hexMode={showHexes && hexes.cells.length > 0 ? (day !== null ? 'day' : 'period') : null} steps={hexView.steps} res={hexView.res} caption={caption} />
-                <MapControls bbox={bbox} drawing={drawing} onBbox={applyBbox} onDrawToggle={() => setDrawing((d) => !d)} onClear={clear} showHexes={showHexes} onShowHexes={setShowHexes} />
-              </div>
+              {mapArea({ cells: hexView.items, steps: hexView.steps, kind: 'days', legend: day !== null ? 'day' : 'period', caption, empty: !loading && !hexesLoading && hexes.total === 0 })}
 
               <div className="min-w-0 bg-surface px-4 lg:overflow-y-auto lg:border-l lg:border-line lg:px-7">
                 {rawNotice}
@@ -357,12 +457,18 @@ export default function App() {
                       </div>
                       {group === 'time' && (
                         <>
-                          <ChartCard id="trend-h" title={t('trendTitle')} hint={t('trendHint')}>
+                          <ChartCard id="trend-h" title={t('trendTitle')} hint={inRange.some((p) => p.modis !== null && p.harmonized === null) ? `${t('trendHint')} ${t('noCombinedNote')}` : t('trendHint')}>
                             <TrendChart points={inRange} source={source} focus={focus} onSelect={pickMonth} />
                           </ChartCard>
-                          <ChartCard id="annual-h" title={t('annualTitle')} hint={t('annualHint')}>
-                            <AnnualChart points={inRange} source={source} focusYear={focusPoint.year} onSelectYear={pickYear} />
-                          </ChartCard>
+                          {shortPeriod ? (
+                            <ChartCard id="months-h" title={t('monthCompareTitle')} hint={t('monthCompareHint')}>
+                              <MonthCompareChart months={monthRows} focus={focus} onSelect={pickMonth} />
+                            </ChartCard>
+                          ) : (
+                            <ChartCard id="annual-h" title={t('annualTitle')} hint={t('annualHint')}>
+                              <AnnualChart points={inRange} source={source} focusYear={focusPoint.year} onSelectYear={pickYear} />
+                            </ChartCard>
+                          )}
                         </>
                       )}
                       {group === 'usual' && (
@@ -391,9 +497,20 @@ export default function App() {
             </div>
           )}
 
-          {tab === 'calendar' && (
-            <div role="tabpanel" id="panel-calendar" aria-labelledby="tab-calendar" className="h-full bg-surface px-4 sm:px-7 lg:overflow-y-auto">
+          {tab === 'analog' && (
+            <div role="tabpanel" id="panel-analog" aria-labelledby="tab-analog" className="h-full bg-surface px-4 sm:px-7 lg:overflow-y-auto">
               <div className="mx-auto max-w-5xl">
+                <AnalogTab bbox={bbox} place={place} />
+                {footer}
+              </div>
+            </div>
+          )}
+
+          {tab === 'calendar' && (
+            <div role="tabpanel" id="panel-calendar" aria-labelledby="tab-calendar" className="grid h-full lg:grid-cols-[minmax(0,1.1fr)_minmax(420px,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+              {mapArea({ cells: tempView, steps: TEMP_STEPS, kind: 'tempC', sparse: day !== null, legend: day !== null ? 'tempDay' : 'tempMonth', caption: tempCaption, empty: !!tempQuery && !tempsLoading && !!dataSource.temps && temps.total === 0 })}
+
+              <div className="min-w-0 bg-surface px-4 lg:overflow-y-auto lg:border-l lg:border-line lg:px-7">
                 {rawNotice}
                 {status ?? (
                   focusPoint && (
@@ -410,11 +527,10 @@ export default function App() {
                       onSelect={pickMonth}
                       daily={daily}
                       day={day}
-                      onPickDay={(d) => {
-                        setDayPick(d === null ? null : { ym: focusPoint.yearMonth, day: d });
-                        if (d !== null) setShowHexes(true);
-                      }}
-                      onShowOnMap={() => setTab('overview')}
+                      onPickDay={(d) => setDayPick(d === null ? null : { ym: focusPoint.yearMonth, day: d })}
+                      onDownloadMonthly={exportCsv}
+                      onDownloadDaily={exportDaily}
+                      onDownloadCells={exportCells}
                     />
                   )
                 )}

@@ -1,28 +1,35 @@
 import { cellToParent, getResolution, latLngToCell } from 'h3-js';
 import { describe, expect, it } from 'vitest';
 import { MockDataSource } from '../src/data/MockDataSource';
-import { aggregateCells, hexColorExpression, hexGeoJson, hexResolution, hexResolutionForZoom, hexStepIndex, hexSteps } from '../src/lib/hex';
+import { readFileSync } from 'node:fs';
+import { cellToBoundary, cellToLatLng, gridDisk } from 'h3-js';
+import { buildCountries } from '../src/lib/countries';
+import { pointInGeometry } from '../src/lib/geo';
+import { aggregateCells, hexColorExpression, hexGeoJson, hexOverlapsGeometry, hexStepIndex, hexSteps, viewportBox } from '../src/lib/hex';
 
-describe('hexResolution', () => {
-  it('uses bigger hexagons for bigger areas so they stay visible on screen', () => {
-    const box = (span: number) => ({ west: 100, south: 10, east: 100 + span, north: 10 + span / 2 });
-    expect([0.3, 1, 3, 8, 20, 60].map((s) => hexResolution(box(s)))).toEqual([7, 6, 5, 4, 3, 3]);
+describe('viewportBox', () => {
+  const area = { west: 102, south: 8, east: 110, north: 24 };
+  it('is the whole area when the map reports no view yet', () => {
+    expect(viewportBox(area, null)).toBe(area);
   });
-  it('uses the biggest hexagons when there is no area', () => {
-    expect(hexResolution(null)).toBe(3);
+  it('covers the view with half a screen to spare, and stays inside the area', () => {
+    const view = { west: 104, south: 14, east: 106, north: 16 };
+    const box = viewportBox(area, view)!;
+    expect(box.west).toBeLessThanOrEqual(103);
+    expect(box.east).toBeGreaterThanOrEqual(107);
+    expect(box.south).toBeLessThanOrEqual(13);
+    expect(box.north).toBeGreaterThanOrEqual(17);
+    expect(viewportBox(area, { west: 90, south: 0, east: 130, north: 40 })).toEqual(area);
   });
-});
-
-describe('hexResolutionForZoom', () => {
-  it('keeps hexagons about 10 px wide: coarser when zoomed out, down to the data cell (res7) when zoomed in', () => {
-    // MapLibre zoom at Vietnam's latitude: a country-sized view is about 4.5.
-    expect([[4.5, 16], [6, 16], [7, 16], [8, 16], [10, 16]].map(([z, lat]) => hexResolutionForZoom(z, lat))).toEqual([4, 5, 6, 7, 7]);
+  it('still covers the view after a small pan, so the same request can be reused', () => {
+    const a = viewportBox(area, { west: 104, south: 14, east: 106, north: 16 })!;
+    expect(a.west).toBeLessThanOrEqual(104 - 0.5);
+    expect(a.east).toBeGreaterThanOrEqual(106 + 0.5);
+    expect(a.south).toBeLessThanOrEqual(14 - 0.5);
+    expect(a.north).toBeGreaterThanOrEqual(16 + 0.5);
   });
-  it('never goes coarser than res3, even for a world view', () => {
-    expect(hexResolutionForZoom(0.5, 0)).toBe(3);
-  });
-  it('picks a finer hexagon at the same zoom nearer the poles, where the map is stretched', () => {
-    expect(hexResolutionForZoom(5, 70)).toBeGreaterThan(hexResolutionForZoom(5, 0));
+  it('is null when the view does not touch the area', () => {
+    expect(viewportBox(area, { west: 20, south: 0, east: 30, north: 10 })).toBeNull();
   });
 });
 
@@ -124,5 +131,47 @@ describe('MockDataSource.hexes', () => {
     expect(day.cells.length).toBeGreaterThan(0);
     expect(day.cells.length).toBeLessThan(month.cells.length);
     expect(day.cells.every((c) => c.days === 1)).toBe(true);
+  });
+});
+
+
+describe('hexOverlapsGeometry', () => {
+  const vietnam = buildCountries(JSON.parse(readFileSync('node_modules/world-atlas/countries-50m.json', 'utf-8'))).find((c) => c.name === 'Vietnam')!.geometry;
+  // Walk the coast near Da Nang at res 4 to find a hexagon whose centre is in the sea but which still reaches land.
+  const around = gridDisk(latLngToCell(16.05, 108.5, 4), 4);
+  const centreIn = (h: string) => { const [lat, lon] = cellToLatLng(h); return pointInGeometry(lon, lat, vietnam); };
+  const reachesLand = (h: string) => cellToBoundary(h, true).some(([x, y]) => pointInGeometry(x, y, vietnam));
+
+  it('keeps a hexagon whose centre is inside the country', () => {
+    const inside = around.find(centreIn)!;
+    expect(hexOverlapsGeometry(inside, vietnam)).toBe(true);
+  });
+  it('keeps a coastal hexagon whose centre is in the sea but whose edge reaches the land', () => {
+    const sliver = around.find((h) => !centreIn(h) && reachesLand(h));
+    expect(sliver).toBeDefined();
+    expect(hexOverlapsGeometry(sliver!, vietnam)).toBe(true);
+  });
+  it('drops a hexagon far from the country', () => {
+    expect(hexOverlapsGeometry(latLngToCell(40, 10, 4), vietnam)).toBe(false);
+  });
+});
+
+describe('MockDataSource.hexes at a coarser resolution', () => {
+  const bbox = { west: 98, south: 12, east: 108, north: 22 };
+  it('merges the cells into bigger hexagons without losing a day', async () => {
+    const ds = new MockDataSource();
+    const range = { start: '2026-09', end: '2026-09' };
+    const fine = await ds.hexes(bbox, range, 'harmonized');
+    const coarse = await ds.hexes(bbox, range, 'harmonized', undefined, { res: 4 });
+    expect(coarse.cells.length).toBeLessThan(fine.cells.length);
+    expect(coarse.cells.every((c) => getResolution(c.h3) === 4)).toBe(true);
+    expect(coarse.cells.reduce((s, c) => s + c.days, 0)).toBe(fine.cells.reduce((s, c) => s + c.days, 0));
+  });
+  it('keeps only the busiest when a limit is given', async () => {
+    const ds = new MockDataSource();
+    const h = await ds.hexes(bbox, { start: '2026-09', end: '2026-09' }, 'harmonized', undefined, { limit: 5 });
+    expect(h.cells).toHaveLength(5);
+    expect(h.total).toBeGreaterThan(5);
+    expect(h.cells[0].days).toBeGreaterThanOrEqual(h.cells[4].days);
   });
 });

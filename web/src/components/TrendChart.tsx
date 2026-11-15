@@ -15,10 +15,17 @@ interface Props {
 const FONT = 'Barlow, system-ui, sans-serif';
 
 export default function TrendChart({ points, source, focus, onSelect }: Props) {
-  const { t, fmt, fmtCompact, fmtMonth } = useI18n();
+  const { t, months, fmt, fmtCompact, fmtMonth } = useI18n();
 
   const option = useMemo<EChartsCoreOption>(() => {
     const x = points.map((p) => p.yearMonth);
+    // A few months: name every month and show the points; a long run: years on the axis and a slider to zoom.
+    const few = points.length <= 12;
+    const medium = points.length <= 36;
+    const label = (v: string, i: number) => {
+      const mon = months[Number(v.slice(5)) - 1];
+      return few || i === 0 || v.slice(5) === '01' ? `${mon} ${v.slice(0, 4)}` : mon;
+    };
     const calib = points.filter((p) => p.allInCalibration);
     const markArea = calib.length
       ? {
@@ -28,14 +35,21 @@ export default function TrendChart({ points, source, focus, onSelect }: Props) {
           data: [[{ xAxis: calib[0].yearMonth, name: t('calibrationOverlap') }, { xAxis: calib[calib.length - 1].yearMonth }]],
         }
       : undefined;
-    const markLine =
-      focus && x.includes(focus)
-        ? { silent: true, symbol: 'none', label: { show: false }, lineStyle: { color: COLORS.ink, width: 1.5, type: 'solid' as const }, data: [{ xAxis: focus }] }
-        : undefined;
+    // Moments the satellites changed. The series is built so that these steps do not show up as jumps in fire.
+    const eras = [
+      { ym: '2002-07', name: t('eraAqua') },
+      { ym: '2012-02', name: t('eraSnpp') },
+    ].filter((e) => x.includes(e.ym));
+    const markLineData = [
+      ...eras.map((e) => ({ xAxis: e.ym, name: e.name, lineStyle: { color: COLORS.muted, width: 1, type: 'dashed' as const }, label: { show: true, formatter: e.name, position: 'insideEndTop' as const, rotate: 0, align: 'left' as const, color: COLORS.muted, fontSize: 11, fontFamily: FONT } })),
+      ...(focus && x.includes(focus) ? [{ xAxis: focus, lineStyle: { color: COLORS.ink, width: 1.5, type: 'solid' as const }, label: { show: false } }] : []),
+    ];
+    const markLine = markLineData.length ? { silent: true, symbol: 'none', label: { show: false }, data: markLineData } : undefined;
     const line = (name: string, key: 'modis' | 'viirs' | 'harmonized', color: string, dashed: boolean) => ({
       name,
       type: 'line' as const,
-      showSymbol: false,
+      showSymbol: few,
+      symbolSize: 7,
       connectNulls: false,
       data: points.map((p) => p[key]),
       lineStyle: { color, width: source === key ? 2.5 : 1.25, type: dashed ? ('dashed' as const) : ('solid' as const), opacity: source === key ? 1 : 0.75 },
@@ -48,7 +62,7 @@ export default function TrendChart({ points, source, focus, onSelect }: Props) {
       backgroundColor: 'transparent',
       animation: false,
       textStyle: { fontFamily: FONT },
-      grid: { left: 48, right: 8, top: 40, bottom: 62 },
+      grid: { left: 48, right: 16, top: 40, bottom: medium ? 28 : 62 },
       legend: { top: 0, left: 0, textStyle: { color: COLORS.ink, fontSize: 13 }, icon: 'roundRect', itemWidth: 18, itemHeight: 4 },
       tooltip: {
         trigger: 'axis',
@@ -62,7 +76,7 @@ export default function TrendChart({ points, source, focus, onSelect }: Props) {
       xAxis: {
         type: 'category',
         data: x,
-        axisLabel: { color: COLORS.muted, fontSize: 12, formatter: (v: string) => v.slice(0, 4) },
+        axisLabel: { color: COLORS.muted, fontSize: 12, interval: few ? 0 : 'auto', formatter: medium ? label : (v: string) => v.slice(0, 4) },
         axisTick: { show: false },
         axisLine: { lineStyle: { color: COLORS.line } },
       },
@@ -71,26 +85,28 @@ export default function TrendChart({ points, source, focus, onSelect }: Props) {
         axisLabel: { color: COLORS.muted, fontSize: 12, formatter: (v: number) => fmtCompact(v) },
         splitLine: { lineStyle: { color: COLORS.line, type: 'dashed' } },
       },
-      dataZoom: [
-        { type: 'inside' },
-        {
-          type: 'slider',
-          height: 20,
-          bottom: 8,
-          borderColor: COLORS.line,
-          textStyle: { color: COLORS.muted },
-          fillerColor: 'rgba(200,64,10,0.12)',
-          dataBackground: { lineStyle: { color: COLORS.muted }, areaStyle: { color: COLORS.line } },
-          labelFormatter: (_: number, v: string) => v,
-        },
-      ],
+      dataZoom: medium
+        ? []
+        : [
+            { type: 'inside' },
+            {
+              type: 'slider',
+              height: 20,
+              bottom: 8,
+              borderColor: COLORS.line,
+              textStyle: { color: COLORS.muted },
+              fillerColor: 'rgba(200,64,10,0.12)',
+              dataBackground: { lineStyle: { color: COLORS.muted }, areaStyle: { color: COLORS.line } },
+              labelFormatter: (_: number, v: string) => v,
+            },
+          ],
       series: [
         line(t('srcModis'), 'modis', COLORS.modis, false),
         line(t('srcViirs'), 'viirs', COLORS.viirs, true),
         line(t('srcHarmonized'), 'harmonized', COLORS.ember, false),
       ],
     };
-  }, [points, source, focus, t, fmt, fmtCompact, fmtMonth]);
+  }, [points, source, focus, t, months, fmt, fmtCompact, fmtMonth]);
 
   return (
     <EChart

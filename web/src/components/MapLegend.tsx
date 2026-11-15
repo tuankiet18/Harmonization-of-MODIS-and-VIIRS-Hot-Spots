@@ -5,18 +5,17 @@ import { COLORS } from '../lib/theme';
 interface Props {
   hasArea: boolean;
   /** What the hexagons on the map show right now: the chosen period or one day, or nothing. */
-  hexMode: 'period' | 'day' | null;
+  hexMode: 'period' | 'day' | 'tempDay' | 'tempMonth' | null;
   steps: HexStep[];
-  res: number;
   /** What the hexagons add up to, e.g. '77 hexagons with fire (about 253 km2 each)'. */
   caption: string;
 }
 
 /** Key to the map symbols that are on screen right now. */
-export default function MapLegend({ hasArea, hexMode, steps, res, caption }: Props) {
+export default function MapLegend({ hasArea, hexMode, steps, caption }: Props) {
   const { t } = useI18n();
-  const fine = res === 7;
-  const title = hexMode === 'day' ? (fine ? t('legendHexDay') : t('legendHexDayCoarse')) : fine ? t('legendHexMonth') : t('legendHexMonthCoarse');
+  const title =
+    hexMode === 'tempDay' ? t('legendTempDay') : hexMode === 'tempMonth' ? t('legendTempMonth') : hexMode === 'day' ? t('legendHexDay') : t('legendHexMonth');
   return (
     <div className="pointer-events-none absolute bottom-6 left-3 z-10 flex flex-col gap-1.5 rounded-lg bg-surface/95 px-3 py-2 text-sm shadow-sm" role="group" aria-label={t('legend')}>
       <p className="flex items-center gap-2">
@@ -32,9 +31,9 @@ export default function MapLegend({ hasArea, hexMode, steps, res, caption }: Pro
           <p>{title}</p>
           <ul className="mt-1 flex">
             {steps.map((s) => (
-              <li key={s.min} className="flex flex-col items-center">
-                <span className="block h-3 w-9 border border-ink/30" style={{ background: s.color }} aria-hidden="true" />
-                <span className="text-xs text-muted">{s.label}</span>
+              <li key={s.min} className="flex min-w-9 flex-col items-center">
+                <span className="block h-3 w-full border border-ink/30" style={{ background: s.color }} aria-hidden="true" />
+                <span className="px-1 text-xs whitespace-nowrap text-muted">{s.label}</span>
               </li>
             ))}
           </ul>

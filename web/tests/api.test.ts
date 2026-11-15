@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiDataSource } from '../src/data/ApiDataSource';
+import { ApiDataSource, ApiError } from '../src/data/ApiDataSource';
 
 const bbox = { west: 98, south: 12, east: 108, north: 22 };
 
@@ -38,11 +38,34 @@ describe('ApiDataSource', () => {
     expect(b.calls[0]).toBe('/api/hexes?west=98&south=12&east=108&north=22&from=2020-01&to=2022-12&source=harmonized');
   });
 
+  it('asks the server for hexagons of a resolution and for at most so many', async () => {
+    const { fn, calls } = fake({ cells: [], total: 0, used: 0 });
+    await new ApiDataSource('', fn).hexes(bbox, { start: '2020-01', end: '2020-12' }, 'harmonized', undefined, { res: 4, limit: 300 });
+    expect(calls[0]).toBe('/api/hexes?west=98&south=12&east=108&north=22&from=2020-01&to=2020-12&source=harmonized&res=4&limit=300');
+  });
+
   it('reads /api/meta', async () => {
     const meta = { version: 'v', method: 'm', source: 's', gridDeg: 1, updated: '2026-01-01', firstMonth: '2000-11', lastMonth: '2026-10', isMock: true };
     const { fn, calls } = fake(meta);
     expect(await new ApiDataSource('', fn).meta()).toEqual(meta);
     expect(calls).toEqual(['/api/meta']);
+  });
+
+  it('asks /api/analog for the box, and for a year and month only when given', async () => {
+    const result = { targetYear: 2026, cutoffMonth: 10, cutoffWeek: 43, years: [2001, 2026], ranking: [], targetFrp: [], series: [], source: 's', method: 'm', isMock: true };
+    const a = fake(result);
+    expect(await new ApiDataSource('', a.fn).analog(bbox)).toEqual(result);
+    expect(a.calls[0]).toBe('/api/analog?west=98&south=12&east=108&north=22');
+    const b = fake(result);
+    await new ApiDataSource('', b.fn).analog(bbox, { year: 2018, cutoffMonth: 6 });
+    expect(b.calls[0]).toBe('/api/analog?west=98&south=12&east=108&north=22&year=2018&cutoff=6');
+  });
+
+  it('keeps the status on the error, so a view can tell "no data here" from a broken service', async () => {
+    const { fn } = fake({ detail: 'No data' }, 404);
+    const err = await new ApiDataSource('', fn).analog(bbox).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
   });
 
   it('throws with the status when the server refuses, so the page can show its error state', async () => {

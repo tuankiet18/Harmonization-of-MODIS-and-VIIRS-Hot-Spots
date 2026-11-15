@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { IconCalendar, IconOverview } from './components/Icons';
+import { IconAnalog, IconCalendar, IconOverview } from './components/Icons';
 import type { StrKey } from './i18n';
 
 export interface TabDef {
@@ -12,6 +12,7 @@ export interface TabDef {
 export const TABS: TabDef[] = [
   { id: 'overview', label: 'tabOverview', Icon: IconOverview },
   { id: 'calendar', label: 'tabCalendar', Icon: IconCalendar },
+  { id: 'analog', label: 'tabAnalog', Icon: IconAnalog },
 ];
 
 export const DEFAULT_TAB = 'overview';

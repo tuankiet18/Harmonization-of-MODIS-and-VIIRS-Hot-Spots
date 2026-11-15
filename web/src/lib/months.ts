@@ -44,3 +44,8 @@ export function nearestMonth(months: string[], ym: string): string | null {
   }
   return best;
 }
+
+/** Months in a period, both ends included. */
+export function monthCount(range: { start: string; end: string }): number {
+  return index(range.end) - index(range.start) + 1;
+}
