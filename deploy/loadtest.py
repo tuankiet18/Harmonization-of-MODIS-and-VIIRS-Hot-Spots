@@ -40,11 +40,12 @@ load_samples: list[float] = []
 
 
 class Visitor(threading.Thread):
-    def __init__(self, base: str, end: float, ramp: float, seed: int):
+    def __init__(self, base: str, end: float, ramp: float, seed: int, ip: str = ""):
         super().__init__(daemon=True)
         u = urllib.parse.urlparse(base)
         self.https, self.host, self.port = u.scheme == "https", u.hostname, u.port or (443 if u.scheme == "https" else 80)
         self.end, self.ramp, self.rng = end, ramp, random.Random(seed)
+        self.ip = ip  # sent as X-Forwarded-For so the server tells the visitors apart (only honoured when talking to nginx directly)
         self.conn = None
 
     def get(self, kind: str, path: str) -> None:
@@ -55,7 +56,7 @@ class Visitor(threading.Thread):
                 if self.conn is None:
                     self.conn = (http.client.HTTPSConnection(self.host, self.port, timeout=90, context=ssl.create_default_context())
                                  if self.https else http.client.HTTPConnection(self.host, self.port, timeout=90))
-                self.conn.request("GET", path, headers={"Accept-Encoding": "gzip, br", "User-Agent": "loadtest"})
+                self.conn.request("GET", path, headers={"Accept-Encoding": "gzip, br", "User-Agent": "loadtest", **({"X-Forwarded-For": self.ip} if self.ip else {})})
                 r = self.conn.getresponse()
                 r.read()
                 status, cache = r.status, r.getheader("X-Cache-Status", "")
@@ -128,9 +129,10 @@ def main() -> None:
     ap.add_argument("--duration", type=int, default=90, help="seconds each visitor keeps going")
     ap.add_argument("--ramp", type=float, default=0, help="spread the start of the visitors over this many seconds (0 = all at once)")
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--own-ips", action="store_true", help="give every visitor an address of its own (X-Forwarded-For); use with --base http://<web container>")
     a = ap.parse_args()
     end = time.time() + a.duration
-    users = [Visitor(a.base, end, a.ramp, a.seed * 1000 + i) for i in range(a.users)]
+    users = [Visitor(a.base, end, a.ramp, a.seed * 1000 + i, f"203.0.113.{i + 1}" if a.own_ips else "") for i in range(a.users)]
     t0 = time.time()
     for u in users:
         u.start()
@@ -153,6 +155,13 @@ def main() -> None:
         bad += errs
         seen = sum(1 for r in rows if r[2])
         print(f"{kind:<11}{len(rows):>6}{pct(lat, .5):>7.2f}s{pct(lat, .95):>7.2f}s{max(lat):>7.2f}s{errs:>8}{(f'{hits}/{seen}' if seen else '-'):>12}")
+    codes: dict[int, int] = defaultdict(int)
+    for rows in results.values():
+        for r in rows:
+            if r[1] != 200:
+                codes[r[1]] += 1
+    if codes:
+        print("not 200:", ", ".join(f"{c} x {n}" for c, n in sorted(codes.items())), " (429 = rate limit, -1 = no answer in 90 s, 5xx = server)")
     print(f"{'ALL':<11}{len(every):>6}{pct(every, .5):>7.2f}s{pct(every, .95):>7.2f}s{max(every):>7.2f}s{bad:>8}")
     if load_samples:
         print(f"host load average (1 min): max {max(load_samples):.1f}, mean {sum(load_samples) / len(load_samples):.1f}  (2 = both vCPUs fully busy)")

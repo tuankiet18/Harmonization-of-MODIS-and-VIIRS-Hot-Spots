@@ -67,7 +67,10 @@ class Store:
         self.hex_dir = data_dir / "hex" if any((data_dir / "hex").glob("ym=*")) else None
         self._series_cache: dict[tuple, tuple] = {}
         # A few queries at a time, the rest wait: DuckDB already uses every core for one query, so running 40 at once only makes every one slower.
-        self._gate = threading.Semaphore(int(os.getenv("DB_CONCURRENCY", "2")))
+        # Heavy ones (a month of temperatures, a small area read from the month files, the cells CSV, a map of many years) go one at a time; the light
+        # ones (a daily calendar, an analog, a cached series) have their own lane so they never wait behind a heavy one.
+        self._gate = threading.Semaphore(int(os.getenv("DB_CONCURRENCY", "4")))
+        self._heavy_gate = threading.Semaphore(int(os.getenv("DB_HEAVY_CONCURRENCY", "1")))
         # Optional pre-added table (scripts/build_monthly_bins.py): the monthly series of a big area without scanning every hex file.
         bins = data_dir / "hex" / "monthly_bins.parquet"
         self._bins = bins if bins.exists() else None
@@ -101,8 +104,8 @@ class Store:
         self._analog_cache: dict[tuple, dict] = {}
 
     # ---- helpers -------------------------------------------------------------------------------------------
-    def _rows(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
-        with self._gate:
+    def _rows(self, sql: str, params: list[Any], heavy: bool = False) -> list[dict[str, Any]]:
+        with self._heavy_gate if heavy else self._gate:
             cur = self.con.cursor()  # one cursor per call: safe under FastAPI's thread pool
             try:
                 cur.execute(sql, params)
@@ -175,6 +178,7 @@ class Store:
                 SELECT ym, sensor, CAST(SUM(bit_count(mask)) AS BIGINT) AS days, COUNT(*) AS cells FROM m GROUP BY ym, sensor
                 """,
                 self._box(b),
+                heavy=True,
             )
         by: dict[str, dict[str, tuple[int, int]]] = {}
         for r in rows:
@@ -407,6 +411,7 @@ class Store:
             LIMIT ?
             """,
             [*params, limit],
+            heavy=True,
         )
         return {"cells": [{"h3": r["h3"], "days": r["days"]} for r in rows], "total": int(rows[0]["total"]) if rows else 0, "used": len(rows)}
 
@@ -485,6 +490,7 @@ class Store:
         rows = self._rows(
             f"SELECT {select} FROM {src} WHERE {where} GROUP BY h3_res7 ORDER BY temp_c DESC, h3 LIMIT ?",
             [start, end, *self._box(b), limit],
+            heavy=True,
         )
         cells = [{"h3": r["h3"], "temp_c": round(r["temp_c"], 1), "n": r["n"]} for r in rows]
         return {"cells": cells, "total": int(rows[0]["total"]) if rows else 0, "used": len(cells), "metric": "bright_mir"}
@@ -535,7 +541,7 @@ class Store:
                       AND COALESCE(type, 0) = 0 AND (point_count - COALESCE(conf_l, 0)) > 0 AND ({self._sensor_sql(sensors)})
                     GROUP BY acq_date, h3_res7 ORDER BY acq_date, h3_res7 LIMIT ?
                     """
-            out.extend(self._rows(query, [first, last, *self._box(b), limit - len(out)]))
+            out.extend(self._rows(query, [first, last, *self._box(b), limit - len(out)], heavy=True))
         return out
 
     def analog_weeks(self, b: Bbox, country: str | None = None) -> dict[int, dict[int, tuple[float, float, float, float, int]]]:
